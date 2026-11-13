@@ -3,11 +3,15 @@
 Annotations are propagated to all ancestors over is_a and part_of. Each term with at
 least two list genes is tested with the hypergeometric distribution against all genes
 annotated in the same aspect, with Bonferroni and Benjamini-Hochberg corrections.
+
+Parent terms often contain exactly the same list genes as a more significant term, so by
+default a term whose list genes match a higher-ranked term is folded into that term's
+``also`` list instead of being reported separately. Corrections still count every test.
 """
 import gzip
 import math
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 ASPECTS = {'P': 'biological_process', 'F': 'molecular_function', 'C': 'cellular_component'}
 NAMESPACE_ASPECT = {v: k for k, v in ASPECTS.items()}
@@ -113,6 +117,7 @@ class Enrichment:
     p_bonferroni: float
     fdr: float
     genes: list
+    also: list = field(default_factory=list)   # [(term id, name)] with the same list genes
 
 
 class GOIndex:
@@ -128,7 +133,7 @@ class GOIndex:
         self.background = {a: {g for g, ts in gene_terms.items()
                                if any(self.term_info[t][1] == a for t in ts)} for a in ASPECTS}
 
-    def enrich(self, genes, aspect='P', min_list_count=2, max_results=50):
+    def enrich(self, genes, aspect='P', min_list_count=2, max_results=50, collapse=True):
         bg = self.background[aspect]
         listed = [g for g in dict.fromkeys(genes) if g in bg]
         M, N = len(bg), len(listed)
@@ -154,7 +159,16 @@ class GOIndex:
         for i in range(n_tests - 1, -1, -1):        # Benjamini-Hochberg, monotone from the top
             prev_fdr = min(prev_fdr, tested[i][0] * n_tests / (i + 1))
             fdrs[i] = prev_fdr
-        for (p, t, hits, K), fdr in zip(tested[:max_results], fdrs):
+        by_genes = {}
+        for (p, t, hits, K), fdr in zip(tested, fdrs):
             name, asp = self.term_info[t]
-            out.append(Enrichment(t, name, asp, len(hits), N, K, M, p, min(1.0, p * n_tests), fdr, hits))
+            key = frozenset(hits)
+            if collapse and key in by_genes:
+                by_genes[key].also.append((t, name))
+                continue
+            if len(out) >= max_results:
+                continue        # keep scanning so shown rows still collect their duplicates
+            row = Enrichment(t, name, asp, len(hits), N, K, M, p, min(1.0, p * n_tests), fdr, hits)
+            by_genes[key] = row
+            out.append(row)
         return out

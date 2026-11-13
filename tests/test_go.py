@@ -88,3 +88,23 @@ def test_enrich_corrections_with_two_terms():
 
 def test_enrich_ignores_genes_outside_the_aspect_background():
     assert _index().enrich([500, 501], 'P') == []
+
+
+def test_terms_with_identical_list_genes_are_collapsed():
+    info = {'GO:R': ('root', 'P'), 'GO:A': ('alpha', 'P'), 'GO:PA': ('parent of alpha', 'P'),
+            'GO:B': ('beta', 'P')}
+    gene_terms = {g: {'GO:R'} for g in range(100)}
+    for g in range(10):
+        gene_terms[g] |= {'GO:A', 'GO:PA'}
+    for g in range(10, 20):
+        gene_terms[g] |= {'GO:PA'}          # the parent is bigger in the genome ...
+    for g in range(20, 30):
+        gene_terms[g] |= {'GO:B'}
+    index = go.GOIndex(info, gene_terms)
+    genes = list(range(6)) + [20, 21, 22]  # ... but holds the same list genes as GO:A
+    collapsed = index.enrich(genes, 'P')
+    assert [r.term_id for r in collapsed] == ['GO:A', 'GO:B']
+    assert collapsed[0].also == [('GO:PA', 'parent of alpha')]
+    full = index.enrich(genes, 'P', collapse=False)
+    assert [r.term_id for r in full] == ['GO:A', 'GO:PA', 'GO:B']
+    assert collapsed[0].p_bonferroni == full[0].p_bonferroni        # corrections count all 3 tests

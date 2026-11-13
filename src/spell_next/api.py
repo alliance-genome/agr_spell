@@ -185,7 +185,8 @@ def go_enrichment(req: EnrichmentRequest):
         'list_size': results[0].list_size if results else 0,
         'background_size': len(index.background[req.aspect]),
         'versions': index.versions,
-        'terms': [{**r.__dict__, 'genes': [names.get(g, str(g)) for g in r.genes]} for r in results],
+        'terms': [{**r.__dict__, 'genes': [names.get(g, str(g)) for g in r.genes],
+                   'also': [{'term_id': t, 'name': n} for t, n in r.also]} for r in results],
     }
 
 

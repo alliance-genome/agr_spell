@@ -164,14 +164,18 @@ async function showEnrichment(geneIds, aspect) {
     <thead><tr><th>GO term</th><th>In list</th><th>Genome</th><th>Corrected p</th><th>FDR</th><th>Genes</th></tr></thead>
     <tbody>${sig.map((t) => `<tr>
       <td><a href="https://www.ebi.ac.uk/QuickGO/term/${encodeURIComponent(t.term_id)}" target="_blank"
-        rel="noopener">${esc(t.name)}</a><br><span class="sub nowrap">${esc(t.term_id)}</span></td>
+        rel="noopener">${esc(t.name)}</a><br><span class="sub nowrap">${esc(t.term_id)}</span>
+        ${t.also.length ? `<div class="also">also: ${t.also.map((a) => `<a href="https://www.ebi.ac.uk/QuickGO/term/${
+          encodeURIComponent(a.term_id)}" target="_blank" rel="noopener" title="${esc(a.term_id)}">${esc(a.name)}</a>`)
+          .join(', ')}</div>` : ''}</td>
       <td class="num">${t.list_count}/${t.list_size}</td>
       <td class="num">${t.background_count}/${t.background_size}</td>
       <td class="num">${p(t.p_bonferroni)}</td>
       <td class="num">${p(t.fdr)}</td>
       <td class="desc"><div title="${esc(t.genes.join(', '))}">${t.genes.map(esc).join(', ')}</div></td>
     </tr>`).join('')}</tbody></table></div>
-    <p class="sub">Hypergeometric test, Bonferroni-corrected p and Benjamini-Hochberg FDR. ${source}</p>`;
+    <p class="sub">Hypergeometric test, Bonferroni-corrected p and Benjamini-Hochberg FDR. Terms with the same
+      genes from the list as a higher-ranked term are listed under it ("also"). ${source}</p>`;
 }
 
 async function drawHeatmap(box, dataset, genes, nQuery) {
