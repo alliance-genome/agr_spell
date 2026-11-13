@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SPELL next</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="#/">SPELL <span>next</span></a>
+    <span class="badge">prototype</span>
+    <form id="search-form" class="search" autocomplete="off">
+      <input id="search-input" type="search" placeholder="Gene name(s), e.g. ACT1 or RPL3 RPL4A RPS2"
+             aria-label="Gene names">
+      <button type="submit">Search</button>
+    </form>
+  </header>
+  <main id="app" aria-live="polite"></main>
+  <div id="tooltip" class="tooltip" hidden></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
