@@ -1,9 +1,10 @@
-"""Build the spell-next data store from a copy of SPELL's files.
+"""Build the spell-next data store for one MOD from a copy of its SPELL files.
 
 Usage: python -m spell_next.build RAW_DIR OUT_DIR [--workers N] [--limit N]
 
-RAW_DIR holds gene_list.txt, dataset_list.txt, expression/ and meta/ (the SGD
-features file and SPELL's dataset metadata dump). OUT_DIR receives:
+RAW_DIR holds gene_list.txt, dataset_list.txt, expression/, an optional mod.toml
+(see spell_next.modconfig; SGD defaults otherwise) and the gene, dataset metadata
+and GO files it names. OUT_DIR receives:
 
 * compendium.npz - expression matrices, parsed correctly (no tab collapsing,
   duplicate dataset entries dropped) and normalized by spell_next.qc;
@@ -11,14 +12,17 @@ features file and SPELL's dataset metadata dump). OUT_DIR receives:
 * qc_report.tsv - per-dataset QC summary for curators.
 """
 import argparse
+import csv
 import gzip
+import json
 import os
 import re
 import sqlite3
 import time
+from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 
-from spell_next import go, qc
+from spell_next import go, modconfig, qc
 from spell_next.compendium import Compendium
 from spell_next.search import search
 
@@ -30,9 +34,10 @@ CREATE TABLE genes (
     id INTEGER PRIMARY KEY,         -- SPELL gene ID
     systematic TEXT NOT NULL,
     standard TEXT,
-    sgdid TEXT,
+    mod_id TEXT,                    -- the MOD's gene ID (SGD S000001855, WormBase WBGene00006789)
     qualifier TEXT,
-    description TEXT
+    description TEXT,
+    species TEXT
 );
 CREATE TABLE gene_names (
     name TEXT NOT NULL,             -- upper case systematic, standard or alias name
@@ -54,7 +59,8 @@ CREATE TABLE datasets (
     tags TEXT,
     num_conds INTEGER,
     num_genes INTEGER,
-    has_metadata INTEGER NOT NULL
+    has_metadata INTEGER NOT NULL,
+    species TEXT                    -- species of most of the dataset's genes
 );
 CREATE TABLE dataset_qc (
     dataset_id INTEGER PRIMARY KEY REFERENCES datasets(id),
@@ -97,21 +103,46 @@ CREATE TABLE coexpression_datasets (
 """
 
 
-def read_sgd_features(path):
-    """Return {systematic name: (sgdid, standard, aliases, qualifier, description)} for ORFs etc."""
+def read_sgd_features(path, default_species=None):
+    """Gene info from SGD's SGD_features.tab: {systematic name: gene dict}."""
     out = {}
     with open(path, errors='replace') as fh:
         for line in fh:
             f = line.rstrip('\n').split('\t')
             if len(f) < 16 or not f[3] or f[1] in ('CDS', 'intron', 'five_prime_UTR_intron'):
                 continue
-            aliases = [a for a in f[5].split('|') if a]
-            out.setdefault(f[3], (f[0], f[4] or None, aliases, f[2] or None, f[15] or None))
+            out.setdefault(f[3], {'mod_id': f[0], 'standard': f[4] or None,
+                                  'aliases': [a for a in f[5].split('|') if a],
+                                  'qualifier': f[2] or None, 'description': f[15] or None,
+                                  'species': default_species})
+    return out
+
+
+def read_gene_table(path, default_species=None):
+    """Gene info from a generic tab-separated table with a header row.
+
+    Columns (only ``systematic`` is required): systematic, mod_id, standard,
+    aliases ('|'-separated), species, description, qualifier.
+    """
+    out = {}
+    with open(path, newline='', errors='replace') as fh:
+        for row in csv.DictReader(fh, delimiter='\t'):
+            name = (row.get('systematic') or '').strip()
+            if not name:
+                continue
+            out.setdefault(name, {
+                'mod_id': (row.get('mod_id') or '').strip() or None,
+                'standard': (row.get('standard') or '').strip() or None,
+                'aliases': [a.strip() for a in (row.get('aliases') or '').split('|') if a.strip()],
+                'qualifier': (row.get('qualifier') or '').strip() or None,
+                'description': (row.get('description') or '').strip() or None,
+                'species': (row.get('species') or '').strip() or default_species,
+            })
     return out
 
 
 def read_dataset_dump(path):
-    """Return {filename: dict} from SPELL's SQLdump*_fordownloadfiles.txt export."""
+    """Dataset metadata from SPELL's SQLdump*_fordownloadfiles.txt export: {filename: dict}."""
     out = {}
     with open(path, errors='replace') as fh:
         for line in fh:
@@ -123,34 +154,81 @@ def read_dataset_dump(path):
                 'title': f[2] or f[7], 'description': f[3],
                 'first_author': f[5], 'authors': f[6], 'journal': f[8],
                 'year': int(f[9]) if f[9].isdigit() else None,
-                'tags': f[10],
+                'tags': f[10], 'geo_id': None,
             }
     return out
 
 
-def write_metadata(db, comp, sgd, dumps):
+def read_dataset_table(path):
+    """Dataset metadata from a tab-separated table with a header row: {filename: dict}.
+
+    Columns (only ``filename`` is required): filename, geo_id, pubmed_id, title,
+    description, first_author, authors, journal, year, tags ('|'-separated).
+    """
+    out = {}
+    with open(path, newline='', errors='replace') as fh:
+        for row in csv.DictReader(fh, delimiter='\t'):
+            name = (row.get('filename') or '').strip()
+            if not name:
+                continue
+            def get(key, row=row):
+                return (row.get(key) or '').strip() or None
+            out[name] = {
+                'pubmed_id': int(get('pubmed_id')) if (get('pubmed_id') or '').isdigit() else None,
+                'year': int(get('year')) if (get('year') or '').isdigit() else None,
+                'geo_id': get('geo_id'), 'title': get('title'), 'description': get('description'),
+                'first_author': get('first_author'), 'authors': get('authors'),
+                'journal': get('journal'), 'tags': get('tags'),
+            }
+    return out
+
+
+def read_gene_info(raw_dir, cfg):
+    g = cfg['genes']
+    path = modconfig.path(raw_dir, g['file'])
+    if not path or not os.path.exists(path):
+        print('genes: %s not found; using systematic names only' % g['file'])
+        return {}
+    reader = read_sgd_features if g['format'] == 'sgd_features' else read_gene_table
+    return reader(path, g.get('default_species'))
+
+
+def read_dataset_info(raw_dir, cfg):
+    d = cfg['datasets']
+    path = modconfig.path(raw_dir, d['metadata'])
+    if not path or not os.path.exists(path):
+        print('datasets: no metadata file; datasets get titles from file names')
+        return {}
+    return read_dataset_dump(path) if d['format'] == 'spell_dump' else read_dataset_table(path)
+
+
+def write_metadata(db, comp, genes, datasets, default_species=None):
     db.executescript(SCHEMA)
-    gene_rows, name_rows = [], []
+    gene_rows, name_rows, species_of = [], [], {}
     for gid, sys_name in zip(comp.gene_ids, comp.gene_names):
-        sgdid, standard, aliases, qualifier, desc = sgd.get(sys_name, (None, None, [], None, None))
-        gene_rows.append((gid, sys_name, standard, sgdid, qualifier, desc))
+        info = genes.get(sys_name, {})
+        species = info.get('species') or default_species
+        species_of[gid] = species
+        gene_rows.append((gid, sys_name, info.get('standard'), info.get('mod_id'), info.get('qualifier'),
+                          info.get('description'), species))
         name_rows.append((sys_name.upper(), gid, 'systematic'))
-        if standard:
-            name_rows.append((standard.upper(), gid, 'standard'))
-        name_rows.extend((a.upper(), gid, 'alias') for a in aliases)
-    db.executemany('INSERT INTO genes VALUES (?,?,?,?,?,?)', gene_rows)
+        if info.get('standard'):
+            name_rows.append((info['standard'].upper(), gid, 'standard'))
+        name_rows.extend((a.upper(), gid, 'alias') for a in info.get('aliases', []))
+    db.executemany('INSERT INTO genes VALUES (?,?,?,?,?,?,?)', gene_rows)
     db.executemany('INSERT INTO gene_names VALUES (?,?,?)', name_rows)
 
     for ds in comp.datasets:
-        meta = dumps.get(ds.filename)
-        geo = re.match(r'(GSE\d+)', ds.filename)
-        db.execute('INSERT INTO datasets VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (
-            ds.id, ds.filename, geo.group(1) if geo else None,
-            meta and meta['pubmed_id'],
-            meta['title'] if meta else (geo.group(1) if geo else ds.filename),
+        meta = datasets.get(ds.filename)
+        geo = (meta and meta.get('geo_id')) or (re.match(r'(GSE\d+)', ds.filename) or [None, None])[1]
+        counts = Counter(species_of[comp.gene_ids[i]] for i in ds.gene_index)
+        species = counts.most_common(1)[0][0] if counts else default_species
+        db.execute('INSERT INTO datasets VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (
+            ds.id, ds.filename, geo, meta and meta['pubmed_id'],
+            (meta and meta['title']) or geo or ds.filename,
             meta and meta['description'], meta and meta['first_author'], meta and meta['authors'],
             meta and meta['journal'], meta and meta['year'], meta and meta['tags'],
-            ds.num_conds, len(ds.gene_index), int(meta is not None)))
+            ds.num_conds, len(ds.gene_index), int(meta is not None), species))
 
 
 def _qc_one(values, centre=False):
@@ -192,26 +270,34 @@ def write_qc_report(db, path):
                                 for v in r) + '\n')
 
 
-def write_go_tables(db, meta_dir):
-    """Store GO terms and propagated SGD annotations for the compendium's genes."""
-    obo = os.path.join(meta_dir, 'go-basic.obo')
-    gaf = os.path.join(meta_dir, 'gene_association.sgd.gaf.gz')
-    if not (os.path.exists(obo) and os.path.exists(gaf)):
-        print('go: go-basic.obo or gene_association.sgd.gaf.gz missing, skipped')
+def write_go_tables(db, raw_dir, cfg):
+    """Store GO terms and propagated annotations (matched on the MOD gene ID) for the compendium's genes."""
+    obo = modconfig.path(raw_dir, cfg['go']['obo'])
+    gafs = [modconfig.path(raw_dir, g) for g in cfg['go']['gaf']]
+    missing = [p for p in [obo] + gafs if not p or not os.path.exists(p)]
+    if missing:
+        print('go: %s missing, GO enrichment disabled' % ', '.join(missing))
         return
     terms = go.read_obo(obo)
-    sgdid_to_gene = {s: g for g, s in db.execute('SELECT id, sgdid FROM genes WHERE sgdid IS NOT NULL')}
-    gene_terms = go.propagate(go.read_gaf(gaf, sgdid_to_gene, terms), go.ancestors(terms))
+    mod_to_gene = {m: g for g, m in db.execute('SELECT id, mod_id FROM genes WHERE mod_id IS NOT NULL')}
+    direct = {}
+    for gaf in gafs:
+        for gene, ts in go.read_gaf(gaf, mod_to_gene, terms).items():
+            direct.setdefault(gene, set()).update(ts)
+    gene_terms = go.propagate(direct, go.ancestors(terms))
     used = set().union(*gene_terms.values()) if gene_terms else set()
     db.executemany('INSERT INTO go_terms VALUES (?,?,?)', [(t, terms[t][0], terms[t][1]) for t in sorted(used)])
     db.executemany('INSERT INTO gene_go VALUES (?,?)', [(g, t) for g, ts in gene_terms.items() for t in ts])
     with open(obo) as fh:
         version = next((ln.split(': ', 1)[1].strip() for ln in fh if ln.startswith('data-version')), 'unknown')
-    with gzip.open(gaf, 'rt') as fh:
-        gaf_date = next((ln.split(':', 1)[1].strip() for ln in fh if ln.startswith('!date-generated')
-                         or ln.startswith('!Generated')), 'unknown')
+    dates = []
+    for gaf in gafs:
+        opener = gzip.open if gaf.endswith('.gz') else open
+        with opener(gaf, 'rt') as fh:
+            dates.append(next((ln.split(':', 1)[1].strip() for ln in fh if ln.startswith('!date-generated')
+                               or ln.startswith('!Generated')), 'unknown'))
     db.executemany('INSERT OR REPLACE INTO build_info VALUES (?,?)',
-                   [('go_ontology', version), ('go_annotations', gaf_date)])
+                   [('go_ontology', version), ('go_annotations', ', '.join(dates))])
     db.commit()
     print('go: %d genes annotated, %d terms (ontology %s)' % (len(gene_terms), len(used), version))
 
@@ -263,22 +349,25 @@ def main():
     db_path = os.path.join(args.out_dir, 'spell.sqlite')
 
     t0 = time.time()
+    cfg = modconfig.load(args.raw_dir)
+    print('mod: %s (%s)' % (cfg['mod']['id'], cfg['mod']['name']))
     comp = Compendium.from_spell_files(args.raw_dir, faithful=False, dedupe=True)
     print('compendium: %d datasets, %d genes (%.0fs)' % (len(comp.datasets), len(comp.gene_ids), time.time() - t0))
 
     if os.path.exists(db_path):
         os.remove(db_path)
     db = sqlite3.connect(db_path)
-    meta_dir = os.path.join(args.raw_dir, 'meta')
-    sgd = read_sgd_features(os.path.join(meta_dir, 'SGD_features.tab'))
-    dump = next(f for f in sorted(os.listdir(meta_dir)) if f.startswith('SQLdump'))
-    dumps = read_dataset_dump(os.path.join(meta_dir, dump))
-    write_metadata(db, comp, sgd, dumps)
+    write_metadata(db, comp, read_gene_info(args.raw_dir, cfg), read_dataset_info(args.raw_dir, cfg),
+                   cfg['genes'].get('default_species'))
+    db.executemany('INSERT OR REPLACE INTO build_info VALUES (?,?)',
+                   [('config', json.dumps(modconfig.public(cfg))), ('mod', cfg['mod']['id'])])
     db.commit()
     n_meta = db.execute('SELECT SUM(has_metadata), COUNT(*) FROM datasets').fetchone()
     print('metadata: %d/%d datasets have publication metadata' % n_meta)
+    species = db.execute('SELECT species, COUNT(*) FROM datasets GROUP BY species ORDER BY 2 DESC').fetchall()
+    print('species: ' + ', '.join('%s (%d datasets)' % s for s in species))
 
-    write_go_tables(db, meta_dir)
+    write_go_tables(db, args.raw_dir, cfg)
 
     if not args.no_qc:
         apply_qc(db, comp, args.workers, centre=args.centre)

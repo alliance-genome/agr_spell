@@ -32,7 +32,12 @@ function saveDisplay() {
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
   (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const label = (g) => g.standard || g.systematic;
-const sgdLink = (g) => `https://www.yeastgenome.org/locus/${encodeURIComponent(g.sgdid || g.systematic)}`;
+// MOD config (branding, gene link template, examples, species), loaded before the first route.
+let CONFIG = { mod: { id: '', examples: [] }, links: { gene: '' }, species: [] };
+const MOD = () => CONFIG.mod.id;
+const multiSpecies = () => CONFIG.species.length > 1;
+const geneLink = (g) => CONFIG.links.gene.replace(/\{(mod_id|systematic|standard)\}/g, (m, key) =>
+  encodeURIComponent((key === 'mod_id' ? g.mod_id || g.systematic : g[key]) || g.systematic));
 
 async function api(path, options) {
   const res = await fetch(path, options);
@@ -154,17 +159,18 @@ function tagPicker(container, tags, selected, onChange) {
 
 function showHome() {
   document.getElementById('search-input').value = '';
-  const examples = ['ACT1', 'GAL1', 'HSP104', 'RPL3 RPL4A RPS2 RPS3', 'CDC28 CLN1 CLN2 CLB5 CLB6'];
+  const m = CONFIG.mod;
+  const listing = m.listing_example || '';
   app.innerHTML = `
     <h1>Find genes co-expressed with your query</h1>
     <p class="sub">Enter one gene for precomputed results, or several genes to search live for genes
-      that share their expression pattern across about 800 yeast expression datasets.</p>
-    <p>Examples: ${examples.map((e) => `<a href="#/search/${encodeURIComponent(e)}">${esc(e)}</a>`).join(' · ')}</p>
-    <p class="sub">To see the expression of genes without a co-expression search, use a listing, e.g.
-      <a href="#/expression/${encodeURIComponent('GAL1 GAL7 GAL10')}">GAL1 GAL7 GAL10</a>.
+      that share their expression pattern across ${esc(m.organism || '')} expression datasets from ${esc(m.name)}.</p>
+    <p>Examples: ${m.examples.map((e) => `<a href="#/search/${encodeURIComponent(e)}">${esc(e)}</a>`).join(' · ')}</p>
+    <p class="sub">To see the expression of genes without a co-expression search, use a listing${listing ?
+      `, e.g. <a href="#/expression/${encodeURIComponent(listing)}">${esc(listing)}</a>` : ''}.
       Browse or filter all datasets by topic on the <a href="#/datasets">Datasets</a> page.</p>
-    <p class="sub">Prototype rebuilt from SGD SPELL. Scores use corrected correlation arithmetic, so they
-      can differ from spell.yeastgenome.org.</p>`;
+    <p class="sub">Prototype rebuilt from SPELL. Scores use corrected correlation arithmetic, so they can differ
+      from the original SPELL site.</p>`;
 }
 
 async function showSearch(query, tags = []) {
@@ -253,17 +259,18 @@ function renderResults(r, query) {
   const genesGrid = makeGrid(document.getElementById('genes-grid'), [
     { headerName: '#', field: 'rank', width: 64, type: 'numericColumn' },
     { headerName: 'Systematic name', field: 'systematic', hide: true },
-    { headerName: 'SGD ID', field: 'sgdid', hide: true },
+    { headerName: `${MOD()} ID`, field: 'mod_id', hide: true },
+    { headerName: 'Species', field: 'species', width: 170, hide: !multiSpecies() },
     { headerName: 'Gene', field: 'label', width: 150, cellRenderer: (c) => cell(
       `<a href="#/search/${encodeURIComponent(c.data.systematic)}">${esc(c.value)}</a><br>
-       <a class="sub nowrap" href="${sgdLink(c.data)}" target="_blank" rel="noopener">${esc(c.data.systematic)}&nbsp;↗</a>`) },
+       <a class="sub nowrap" href="${geneLink(c.data)}" target="_blank" rel="noopener">${esc(c.data.systematic)}&nbsp;↗</a>`) },
     { headerName: 'Score', field: 'score', width: 130, sort: 'desc',
       cellRenderer: (c) => bar(c.value.toFixed(2), c.value / maxScore) },
     { headerName: 'Description', field: 'description', flex: 1, minWidth: 220,
       cellRenderer: (c) => cell(`<div class="clamp" title="${esc(c.value)}">${esc(c.value)}</div>`) },
   ], r.genes.map((g, i) => ({ ...g, rank: i + 1, label: label(g) })));
   csvButton(document.getElementById('genes-grid').parentElement, genesGrid, `spell-next_${slug}_genes.csv`,
-    ['rank', 'label', 'systematic', 'sgdid', 'score', 'description']);
+    ['rank', 'label', 'systematic', 'mod_id', 'species', 'score', 'description']);
 
   const datasetsGrid = makeGrid(document.getElementById('datasets-grid'), [
     { headerName: '#', field: 'rank', width: 64, type: 'numericColumn' },
@@ -273,6 +280,7 @@ function renderResults(r, query) {
     { headerName: 'GEO', field: 'geo_id', hide: true },
     { headerName: 'PubMed', field: 'pubmed_id', hide: true },
     { headerName: 'Conditions', field: 'num_conds', hide: true },
+    { headerName: 'Species', field: 'species', width: 170, hide: !multiSpecies() },
     { headerName: 'Dataset', field: 'title', flex: 1, minWidth: 240, cellRenderer: (c) => cell(
       `<div class="clamp1"><a href="#/dataset/${c.data.id}" title="${esc(c.value)}">${esc(c.value)}</a></div>
        <span class="sub">${datasetMeta(c.data, [`${c.data.num_conds} conditions`])}</span>`) },
@@ -280,7 +288,7 @@ function renderResults(r, query) {
       cellRenderer: (c) => bar(`${c.value.toFixed(1)}%`, c.value / maxWeight) },
   ], r.datasets.map((d, i) => ({ ...d, rank: i + 1 })));
   csvButton(document.getElementById('datasets-grid').parentElement, datasetsGrid, `spell-next_${slug}_datasets.csv`,
-    ['rank', 'id', 'title', 'first_author', 'year', 'geo_id', 'pubmed_id', 'num_conds', 'weight']);
+    ['rank', 'id', 'title', 'first_author', 'year', 'geo_id', 'pubmed_id', 'num_conds', 'species', 'weight']);
 
   const hitIds = r.genes.slice(0, GO_GENES).map((g) => g.id);
   document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => {
@@ -370,8 +378,9 @@ async function showEnrichment(geneIds, aspect, queryGenes) {
   }
   const sig = e.terms.filter((t) => t.fdr < 0.05);
   const p = (v) => (v < 1e-3 ? v.toExponential(1) : v.toFixed(3));
-  const source = `GO ${esc(e.versions.go_ontology || '')}, SGD annotations ${esc(e.versions.go_annotations || '')};
-    background: ${e.background_size} annotated genes`;
+  const source = `GO ${esc(e.versions.go_ontology || '')}, ${esc(MOD())} annotations
+    ${esc(e.versions.go_annotations || '')}; background: ${e.background_size} annotated genes${
+    multiSpecies() && e.species ? ` of ${esc(e.species)}` : ''}`;
   if (!sig.length) {
     box.innerHTML = `<p class="sub">No ${esc(e.aspect.replace('_', ' '))} terms enriched at FDR &lt; 5%. ${source}</p>`;
     return;
@@ -608,9 +617,9 @@ async function showHelp() {
   app.innerHTML = `<article class="doc">
     <h1>Help</h1>
     <h2>Searching</h2>
-    <p>Type one or more gene names in the search box: standard names (ACT1), systematic names (YFL039C) or
-      aliases, separated by spaces or commas (up to ${esc(i.max_query_genes || 50)} genes). If an alias matches
-      several genes, you are asked to pick one.</p>
+    <p>Type one or more gene names in the search box: standard names, systematic names or aliases
+      (e.g. ${esc(CONFIG.mod.examples[0] || '')}), separated by spaces or commas (up to
+      ${esc(i.max_query_genes || 50)} genes). If an alias matches several genes, you are asked to pick one.</p>
     <ul>
       <li><b>One gene</b>: results are precomputed and appear instantly.</li>
       <li><b>Several genes</b>: the search runs live and finds genes that share the expression pattern of the
@@ -639,7 +648,8 @@ async function showHelp() {
     <h2>Expression without a search</h2>
     <p>A listing shows your genes' expression in every dataset that measures them, without ranking other genes:
       use <i>Show the expression of the query genes only</i> on a results page, or go to
-      <code>#/expression/GAL1 GAL7 GAL10</code>. Tags restrict listings too.</p>
+      <code>#/expression/${esc(CONFIG.mod.listing_example || CONFIG.mod.examples[0] || '')}</code>.
+      Tags restrict listings too.</p>
     <h2>Display options</h2>
     <p>Above the heatmaps, <i>Scale</i> switches between standardized values (z-scores), log change from the
       gene's mean, and rank order; <i>Colours</i> offers blue/red, red/green and yellow/blue. Your choice is
@@ -649,7 +659,7 @@ async function showHelp() {
       the whole expression matrix as searched (after any log transform) as a tab-separated file.</p>
     <h2>Embedding results on other sites</h2>
     <p>Other pages can show a compact result in an iframe:
-      <code>&lt;iframe src="${esc(location.origin)}/embed?gene=ACT1&amp;genes=10&amp;sets=5"&gt;&lt;/iframe&gt;</code>
+      <code>&lt;iframe src="${esc(location.origin)}/embed?gene=${esc(encodeURIComponent((CONFIG.mod.examples[0] || '').split(' ')[0]))}&amp;genes=10&amp;sets=5"&gt;&lt;/iframe&gt;</code>
       (<code>genes</code>: co-expressed genes shown, <code>sets</code>: datasets shown).</p>
     <h2>Usage logging</h2>
     <p>Searches are logged by month (date, time, search type, query genes and tags) to report usage. No IP
@@ -664,7 +674,8 @@ async function showHelp() {
         (${esc((i.qc_scales || {}).ratio ?? '?')} of ratios, ${esc((i.qc_scales || {}).intensity ?? '?')} of
         intensities or counts). ${esc(i.qc_flagged ?? '?')} datasets are flagged for curator review on their
         dataset pages.</li>
-      <li>GO enrichment uses current GO and SGD annotations.</li>
+      <li>GO enrichment uses current GO and ${esc(MOD())} annotations${multiSpecies() ?
+        ', with each species tested against its own annotated genes' : ''}.</li>
     </ul>
   </article>`;
 }
@@ -680,8 +691,9 @@ async function showAbout() {
     <p>SPELL (Serial Pattern of Expression Levels Locator) is a query-driven search engine for large gene
       expression compendia. Given a set of query genes, it weights each dataset by how well the query genes are
       co-expressed in it, then ranks every other gene by its weighted correlation with the query. Negative
-      correlations are treated as no correlation. This prototype re-implements SGD's SPELL in Python with a new
-      web interface, as a candidate for hosting within the Alliance of Genome Resources.</p>
+      correlations are treated as no correlation. This prototype re-implements SPELL in Python with a new web
+      interface for ${esc(CONFIG.mod.name)}, as a candidate for hosting within the Alliance of Genome
+      Resources.</p>
     <h2>Citation</h2>
     <p>The SPELL algorithm is described in: Hibbs MA, et al. Exploring the functional landscape of gene
       expression: directed search of large microarray compendia. <i>Bioinformatics</i>, 2007.
@@ -689,15 +701,17 @@ async function showAbout() {
     <h2>Data</h2>
     <dl class="meta">
       <dt>Expression datasets</dt><dd>${esc(i.datasets ?? '—')} (${esc(i.conditions ?? '—')} conditions), from
-        SGD SPELL; ${esc(i.datasets_with_metadata ?? '—')} with publication details</dd>
-      <dt>Genes</dt><dd>${esc(i.genes ?? '—')}; names, aliases and descriptions from SGD</dd>
+        ${esc(MOD())} SPELL; ${esc(i.datasets_with_metadata ?? '—')} with publication details</dd>
+      ${multiSpecies() ? `<dt>Species</dt><dd>${CONFIG.species.map(esc).join(', ')}</dd>` : ''}
+      <dt>Genes</dt><dd>${esc(i.genes ?? '—')}; names, aliases and descriptions from ${esc(MOD())}</dd>
       <dt>Gene Ontology</dt><dd>${esc(v.go_ontology || '—')}</dd>
-      <dt>GO annotations</dt><dd>SGD, ${esc(v.go_annotations || '—')}</dd>
+      <dt>GO annotations</dt><dd>${esc(MOD())}, ${esc(v.go_annotations || '—')}</dd>
     </dl>
     <h2>Credits</h2>
     <p>The original SPELL was developed by the Troyanskaya lab at Princeton University and the Hibbs lab at The
-      Jackson Laboratory, and run at SGD as spell.yeastgenome.org. Questions about this prototype:
-      <a href="mailto:sgd-helpdesk@lists.stanford.edu">sgd-helpdesk@lists.stanford.edu</a>.</p>
+      Jackson Laboratory, and was run by SGD (spell.yeastgenome.org) and WormBase (spell.wormbase.org).
+      ${CONFIG.mod.contact ? `Questions about this site:
+      <a href="mailto:${esc(CONFIG.mod.contact)}">${esc(CONFIG.mod.contact)}</a>.` : ''}</p>
   </article>`;
 }
 
@@ -711,12 +725,15 @@ async function showDatasets(initialTags) {
     return;
   }
   const selected = new Set(initialTags);
+  const speciesFilter = () => (document.getElementById('ds-species') || { value: '' }).value;
   app.innerHTML = `
     <h1>Datasets</h1>
     <p class="sub">${datasets.length} expression datasets. Pick tags to list matching datasets (a dataset
       matches if it carries any selected tag), then search genes within them.</p>
     <div class="tag-picker" id="ds-tags"></div>
     <div class="ds-tools">
+      ${multiSpecies() ? `<select id="ds-species" aria-label="Species"><option value="">All species</option>${
+        CONFIG.species.map((sp) => `<option>${esc(sp)}</option>`).join('')}</select>` : ''}
       <input type="search" id="ds-filter" placeholder="Filter by title, author, GEO ID…" aria-label="Filter datasets">
       <form id="ds-search" class="search">
         <input type="search" id="ds-genes" placeholder="Gene name(s) to search in the selected datasets"
@@ -734,6 +751,7 @@ async function showDatasets(initialTags) {
         `<div class="clamp1"><a href="#/dataset/${c.data.id}" title="${esc(c.value)}">${esc(c.value)}</a></div>
          <span class="sub">${esc([c.data.first_author, c.data.year, c.data.journal].filter(Boolean).join(' · '))}</span>`) },
       { headerName: 'GEO', field: 'geo_id', width: 140 },
+      { headerName: 'Species', field: 'species', width: 170, hide: !multiSpecies() },
       { headerName: 'Year', field: 'year', width: 90, type: 'numericColumn' },
       { headerName: 'Conditions', field: 'num_conds', width: 120, type: 'numericColumn' },
       { headerName: 'Genes', field: 'num_genes', width: 100, type: 'numericColumn' },
@@ -752,8 +770,9 @@ async function showDatasets(initialTags) {
     rowHeight: 60,
     suppressCellFocus: true,
     enableCellTextSelection: true,
-    isExternalFilterPresent: () => selected.size > 0,
-    doesExternalFilterPass: (node) => node.data.tags.some((t) => selected.has(t)),
+    isExternalFilterPresent: () => selected.size > 0 || speciesFilter() !== '',
+    doesExternalFilterPass: (node) => (selected.size === 0 || node.data.tags.some((t) => selected.has(t)))
+      && (speciesFilter() === '' || node.data.species === speciesFilter()),
     onModelUpdated: (e) => {
       document.getElementById('ds-count').textContent =
         `${e.api.getDisplayedRowCount()} of ${datasets.length} datasets shown`;
@@ -764,6 +783,8 @@ async function showDatasets(initialTags) {
     history.replaceState(null, '', selected.size ? `#/datasets?tags=${encodeURIComponent([...selected].join('|'))}`
       : '#/datasets');
   });
+  const speciesBox = document.getElementById('ds-species');
+  if (speciesBox) speciesBox.addEventListener('change', () => grid.onFilterChanged());
   document.getElementById('ds-filter').addEventListener('input', (e) => {
     grid.setGridOption('quickFilterText', e.target.value);
   });
@@ -833,4 +854,16 @@ document.getElementById('search-form').addEventListener('submit', (ev) => {
   if (q) location.hash = `#/search/${encodeURIComponent(q)}`;
 });
 window.addEventListener('hashchange', route);
-route();
+
+(async () => {
+  try {
+    CONFIG = await api('/api/config');
+  } catch (err) { /* keep defaults; pages still work without branding */ }
+  document.querySelector('.badge').textContent = `${MOD()} prototype`.trim();
+  document.title = `${CONFIG.mod.site_title || 'SPELL next'}${MOD() ? ' · ' + MOD() : ''}`;
+  const ex = CONFIG.mod.examples || [];
+  if (ex.length) {
+    document.getElementById('search-input').placeholder = `Gene name(s), e.g. ${ex[0]}${ex[3] ? ' or ' + ex[3] : ''}`;
+  }
+  route();
+})();

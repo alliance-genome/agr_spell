@@ -1,0 +1,41 @@
+# spell-next config for WormBase: a TEMPLATE to finish with WormBase.
+# Copy to <raw data dir>/mod.toml. Paths are relative to the raw data directory.
+# Lines marked TODO need WormBase's input.
+
+[mod]
+id = "WB"
+name = "WormBase"
+site_title = "SPELL next"
+organism = "nematode"
+contact = "help@wormbase.org"                 # TODO: confirm the help address
+examples = ["unc-54", "lin-12", "daf-2 daf-16 age-1"]   # TODO: pick representative queries
+listing_example = "unc-54 myo-3"              # TODO
+
+[links]
+# Placeholders: {mod_id}, {systematic}, {standard}
+gene = "https://wormbase.org/species/all/gene/{mod_id}"
+
+[genes]
+# Generic gene table (tab-separated, header row). Columns:
+#   systematic   name used in the PCL files and gene_list.txt (e.g. sequence name ZK617.1)
+#   mod_id       WBGene ID; must match column 2 of the GAF files
+#   standard     public name (unc-54)
+#   aliases      other names, '|'-separated
+#   species      e.g. Caenorhabditis elegans; one table can cover all 9 species
+#   description  concise description
+# TODO: WormBase to export this for every gene in its SPELL gene_list.txt.
+file = "meta/genes.tsv"
+format = "gene_table"
+default_species = "Caenorhabditis elegans"
+
+[datasets]
+# Dataset table (tab-separated, header row). Columns: filename, geo_id, pubmed_id,
+# title, description, first_author, authors, journal, year, tags ('|'-separated).
+# TODO: export from WormBase SPELL's datasets table.
+metadata = "meta/datasets.tsv"
+format = "dataset_table"
+
+[go]
+obo = "meta/go-basic.obo"
+# One GAF per species with GO annotations; genes are matched on column 2 (WBGene ID).
+gaf = ["meta/c_elegans.PRJNA13758.current.go_annotations.gaf.gz"]   # TODO: list per-species files

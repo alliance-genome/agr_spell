@@ -17,7 +17,7 @@ import numpy as np
 K = 20
 
 
-def go_terms(gaf, sgdid_to_gene):
+def go_terms(gaf, mod_id_to_gene):
     by_term = defaultdict(set)
     with gzip.open(gaf, 'rt') as fh:
         for line in fh:
@@ -26,7 +26,7 @@ def go_terms(gaf, sgdid_to_gene):
             f = line.split('\t')
             if len(f) < 9 or f[8] != 'P' or 'NOT' in f[3]:
                 continue
-            gene = sgdid_to_gene.get(f[1])
+            gene = mod_id_to_gene.get(f[1])
             if gene is not None:
                 by_term[f[4]].add(gene)
     terms = defaultdict(set)
@@ -35,6 +35,13 @@ def go_terms(gaf, sgdid_to_gene):
             for g in genes:
                 terms[g].add(term)
     return terms
+
+
+def mod_ids(db):
+    """{MOD gene ID: SPELL gene ID}; builds before multi-MOD support call the column sgdid."""
+    cols = {r[1] for r in db.execute('PRAGMA table_info(genes)')}
+    col = 'mod_id' if 'mod_id' in cols else 'sgdid'
+    return {m: g for g, m in db.execute('SELECT id, %s FROM genes WHERE %s IS NOT NULL' % (col, col))}
 
 
 def score(hits_of, terms):
@@ -80,8 +87,7 @@ def main(args):
         args = args[:i] + args[i + 2:]
     gaf, builds = args[0], args[1:]
     db = sqlite3.connect(builds[0] + '/spell.sqlite')
-    sgdid_to_gene = {s: g for g, s in db.execute('SELECT id, sgdid FROM genes WHERE sgdid IS NOT NULL')}
-    terms = go_terms(gaf, sgdid_to_gene)
+    terms = go_terms(gaf, mod_ids(db))
     print('genes with a specific GO BP term: %d' % len(terms))
 
     results = {}

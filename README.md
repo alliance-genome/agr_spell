@@ -26,10 +26,38 @@ from spell_next.compendium import Compendium
 Compendium.from_spell_files('data/raw', faithful=True).save('data/compendium_faithful.npz')
 ```
 
+## One instance per MOD
+
+Each MOD (SGD, WormBase, ...) runs its own instance from the same code, configured by
+`mod.toml` in its raw data directory (paths relative to that directory). Without it,
+SGD defaults apply. Templates: `configs/sgd.toml`, `configs/wb.example.toml`.
+
+| Section | What it sets |
+| --- | --- |
+| `[mod]` | ID, name, organism, contact, example queries shown on the home page |
+| `[links]` | Gene page URL template: `{mod_id}`, `{systematic}`, `{standard}` |
+| `[genes]` | Gene names file: `sgd_features` (SGD_features.tab) or `gene_table` |
+| `[datasets]` | Dataset metadata: `spell_dump` (old SPELL export) or `dataset_table` |
+| `[go]` | GO ontology and one or more GAF files (matched on GAF column 2 = `mod_id`) |
+
+`gene_table` is a tab-separated file with a header row: `systematic` (required; the
+name used in the PCL files), `mod_id`, `standard`, `aliases` (`|`-separated),
+`species`, `description`, `qualifier`. `dataset_table` likewise: `filename` (required),
+`geo_id`, `pubmed_id`, `title`, `description`, `first_author`, `authors`, `journal`,
+`year`, `tags` (`|`-separated).
+
+Several species can share one instance (e.g. WormBase's nematodes). Each dataset's
+species is the species of most of its genes; a gene only occurs in its own species'
+datasets, so results stay within the query's species. GO enrichment tests a gene list
+against the annotated genes of its own species. Species columns and filters appear in
+the interface only when an instance has more than one species. The resolved config is
+stored in the build, so the web app needs only the build directory.
+
 ## Build and run the prototype
 
-`data/raw/meta/` also needs `SGD_features.tab` (from downloads.yeastgenome.org) and
-SPELL's dataset metadata export (`SQLdump*_fordownloadfiles.txt` from the server).
+For SGD, `data/raw/meta/` also needs `SGD_features.tab` (from downloads.yeastgenome.org)
+and SPELL's dataset metadata export (`SQLdump*_fordownloadfiles.txt` from the server);
+copy `configs/sgd.toml` to `data/raw/mod.toml`.
 
 ```bash
 .venv/bin/python -m spell_next.build data/raw data/build      # about 4 minutes on 16 cores
@@ -53,6 +81,7 @@ for every gene. Multi-gene searches run live (at most 4 at a time).
 | `GET /api/expression-listing?genes=...&tags=...` | Datasets measuring the genes (listing mode, no search) |
 | `GET /api/datasets/{id}/download` | Expression matrix as searched, tab-separated |
 | `GET /api/info` | Counts and data versions |
+| `GET /api/config` | MOD branding, gene link template, examples and species |
 | `GET /embed?gene=ACT1&genes=10&sets=5` | Compact result page for iframes |
 
 `POST /api/search` also takes `"tags": [...]`: the search then runs only over datasets

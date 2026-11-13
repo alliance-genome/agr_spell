@@ -1,0 +1,31 @@
+# spell-next config for SGD. Copy to <raw data dir>/mod.toml.
+# Paths are relative to the raw data directory.
+
+[mod]
+id = "SGD"
+name = "Saccharomyces Genome Database"
+site_title = "SPELL next"
+organism = "yeast"
+contact = "sgd-helpdesk@lists.stanford.edu"
+examples = ["ACT1", "GAL1", "HSP104", "RPL3 RPL4A RPS2 RPS3", "CDC28 CLN1 CLN2 CLB5 CLB6"]
+listing_example = "GAL1 GAL7 GAL10"
+
+[links]
+# Placeholders: {mod_id}, {systematic}, {standard}
+gene = "https://www.yeastgenome.org/locus/{mod_id}"
+
+[genes]
+# downloads.yeastgenome.org/curation/chromosomal_feature/SGD_features.tab
+file = "meta/SGD_features.tab"
+format = "sgd_features"
+default_species = "Saccharomyces cerevisiae"
+
+[datasets]
+# Export of SPELL's MySQL datasets table (SQLdump*_fordownloadfiles.txt). New datasets
+# can instead be listed in a table: format = "dataset_table" (see README).
+metadata = "meta/SQLdump2023_fordownloadfiles.txt"
+format = "spell_dump"
+
+[go]
+obo = "meta/go-basic.obo"
+gaf = ["meta/gene_association.sgd.gaf.gz"]

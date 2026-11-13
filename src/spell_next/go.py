@@ -68,8 +68,9 @@ def ancestors(terms):
     return memo
 
 
-def read_gaf(path, sgdid_to_gene, terms):
-    """Return {gene id: set of directly annotated term ids} (NOT annotations skipped)."""
+def read_gaf(path, mod_id_to_gene, terms):
+    """Return {gene id: set of directly annotated term ids}, matching GAF column 2 (the MOD's
+    gene ID) against ``mod_id_to_gene``; NOT annotations are skipped."""
     out = defaultdict(set)
     opener = gzip.open if path.endswith('.gz') else open
     with opener(path, 'rt') as fh:
@@ -79,7 +80,7 @@ def read_gaf(path, sgdid_to_gene, terms):
             f = line.split('\t')
             if len(f) < 9 or 'NOT' in f[3]:
                 continue
-            gene = sgdid_to_gene.get(f[1])
+            gene = mod_id_to_gene.get(f[1])
             if gene is not None and f[4] in terms:
                 out[gene].add(f[4])
     return out
@@ -121,20 +122,40 @@ class Enrichment:
 
 
 class GOIndex:
-    """In-memory GO annotations for the compendium's genes."""
+    """In-memory GO annotations for the compendium's genes.
 
-    def __init__(self, term_info, gene_terms):
+    With several species, each species has its own background (its annotated genes),
+    and a gene list is tested against the background of the species most of it is from.
+    """
+
+    def __init__(self, term_info, gene_terms, gene_species=None):
         self.term_info = term_info                      # term -> (name, aspect)
         self.gene_terms = gene_terms                    # gene -> set of terms (propagated)
-        self.term_genes = defaultdict(set)
+        self.gene_species = gene_species or {}          # gene -> species (None: one species)
+        self.term_genes = defaultdict(lambda: defaultdict(set))   # species -> term -> genes
+        self.backgrounds = defaultdict(lambda: {a: set() for a in ASPECTS})
         for g, ts in gene_terms.items():
+            sp = self.gene_species.get(g)
             for t in ts:
-                self.term_genes[t].add(g)
-        self.background = {a: {g for g, ts in gene_terms.items()
-                               if any(self.term_info[t][1] == a for t in ts)} for a in ASPECTS}
+                self.term_genes[sp][t].add(g)
+                self.backgrounds[sp][self.term_info[t][1]].add(g)
+
+    @property
+    def background(self):
+        """Background of the single (or most annotated) species, by aspect."""
+        return max(self.backgrounds.values(), key=lambda b: len(b['P']))
+
+    def species_of(self, genes):
+        counts = defaultdict(int)
+        for g in genes:
+            if g in self.gene_terms:
+                counts[self.gene_species.get(g)] += 1
+        return max(counts, key=counts.get) if counts else None
 
     def enrich(self, genes, aspect='P', min_list_count=2, max_results=50, collapse=True):
-        bg = self.background[aspect]
+        species = self.species_of(genes)
+        bg = self.backgrounds[species][aspect] if species in self.backgrounds else set()
+        term_genes = self.term_genes[species]
         listed = [g for g in dict.fromkeys(genes) if g in bg]
         M, N = len(bg), len(listed)
         if N == 0:
@@ -148,7 +169,7 @@ class GOIndex:
         for t, hits in counts.items():
             if len(hits) < min_list_count:
                 continue
-            K = len(self.term_genes[t])
+            K = len(term_genes[t])
             if K == M:              # root terms carry no information
                 continue
             tested.append((hypergeom_sf(len(hits), M, K, N), t, hits, K))

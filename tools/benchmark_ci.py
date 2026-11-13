@@ -19,7 +19,7 @@ def main(args):
         args = args[:i] + args[i + 2:]
     gaf, builds = args[0], args[1:]
     db = sqlite3.connect(builds[0] + '/spell.sqlite')
-    terms = B.go_terms(gaf, {s: g for g, s in db.execute('SELECT id, sgdid FROM genes WHERE sgdid IS NOT NULL')})
+    terms = B.go_terms(gaf, B.mod_ids(db))
     genes = sorted(terms)
 
     def per_gene(hits):

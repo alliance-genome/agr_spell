@@ -5,6 +5,7 @@ Run: SPELL_NEXT_DATA=data/build uvicorn spell_next.api:app
 Single-gene results are served from the precomputed table; multi-gene searches run
 live against the in-memory compendium, a few at a time.
 """
+import json
 import os
 import re
 import sqlite3
@@ -20,6 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from spell_next.compendium import Compendium
+from spell_next import modconfig
 from spell_next.go import ASPECTS, GOIndex
 from spell_next.search import search
 from spell_next.searchlog import SearchLog
@@ -40,6 +42,7 @@ async def lifespan(app):
     state['comp'] = Compendium.load(DATA_DIR / 'compendium.npz')
     state['live'] = threading.BoundedSemaphore(MAX_LIVE_SEARCHES)
     state['go'] = load_go_index()
+    state['config'] = load_config()
     state['log'] = SearchLog(LOG_DIR or None)
     yield
     state.clear()
@@ -65,8 +68,8 @@ def gene_info(con, ids):
 def dataset_info(con, ids):
     if not ids:
         return {}
-    rows = con.execute('SELECT id, geo_id, pubmed_id, title, first_author, year, tags, num_conds, num_genes '
-                       'FROM datasets WHERE id IN (%s)' % ','.join('?' * len(ids)), list(ids))
+    rows = con.execute('SELECT id, geo_id, pubmed_id, title, first_author, year, tags, num_conds, num_genes, '
+                       'species FROM datasets WHERE id IN (%s)' % ','.join('?' * len(ids)), list(ids))
     return {r['id']: dict(r) for r in rows}
 
 
@@ -97,9 +100,26 @@ def load_go_index():
         for r in con.execute('SELECT gene_id, term_id FROM gene_go'):
             gene_terms.setdefault(r['gene_id'], set()).add(r['term_id'])
         versions = dict(con.execute('SELECT key, value FROM build_info').fetchall())
-    index = GOIndex(info, gene_terms)
-    index.versions = versions
+        species = {r['id']: r['species'] for r in con.execute('SELECT id, species FROM genes')}
+    index = GOIndex(info, gene_terms, species)
+    index.versions = {k: v for k, v in versions.items() if k.startswith('go_')}
     return index
+
+
+def load_config():
+    """The MOD config stored in the build, plus the species present (SGD defaults for older builds)."""
+    with db() as con:
+        row = con.execute("SELECT value FROM build_info WHERE key = 'config'").fetchone()
+        species = [r[0] for r in con.execute(
+            'SELECT species FROM datasets WHERE species IS NOT NULL GROUP BY species ORDER BY COUNT(*) DESC')]
+    cfg = json.loads(row[0]) if row else modconfig.public(modconfig.DEFAULTS)
+    return {**cfg, 'species': species}
+
+
+@app.get('/api/config')
+def config():
+    """MOD branding, gene link template, example queries and species, for the front end."""
+    return state['config']
 
 
 @app.get('/api/genes/lookup')
@@ -200,7 +220,7 @@ def dataset_list():
         qc_cols = ", q.scale, q.warnings" if has_qc else ""
         qc_join = " LEFT JOIN dataset_qc q ON q.dataset_id = d.id" if has_qc else ""
         rows = con.execute('SELECT d.id, d.title, d.first_author, d.year, d.journal, d.geo_id, d.pubmed_id, '
-                           'd.num_conds, d.num_genes, d.tags, d.has_metadata' + qc_cols +
+                           'd.num_conds, d.num_genes, d.tags, d.has_metadata, d.species' + qc_cols +
                            ' FROM datasets d' + qc_join + ' ORDER BY d.year DESC, d.id DESC').fetchall()
     return [{**dict(r), 'tags': split_tags(r['tags'])} for r in rows]
 
@@ -266,7 +286,8 @@ def info():
     """Counts and data versions for the help and about pages."""
     with db() as con:
         has = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        versions = dict(con.execute('SELECT key, value FROM build_info').fetchall()) if 'build_info' in has else {}
+        versions = {k: v for k, v in con.execute('SELECT key, value FROM build_info') if k.startswith('go_')} \
+            if 'build_info' in has else {}
         qc = dict(con.execute("SELECT scale, COUNT(*) FROM dataset_qc GROUP BY scale").fetchall()) \
             if 'dataset_qc' in has else {}
         flagged = con.execute("SELECT COUNT(*) FROM dataset_qc WHERE warnings != ''").fetchone()[0] \
@@ -307,13 +328,15 @@ def go_enrichment(req: EnrichmentRequest):
     if index is None:
         raise HTTPException(503, 'GO annotations not loaded')
     results = index.enrich(req.gene_ids, req.aspect, max_results=req.max_results)
+    species = index.species_of(req.gene_ids)
     with db() as con:
         names = {g['id']: g['standard'] or g['systematic']
                  for g in gene_info(con, sorted({g for r in results for g in r.genes})).values()}
     return {
         'aspect': ASPECTS[req.aspect],
+        'species': species,
         'list_size': results[0].list_size if results else 0,
-        'background_size': len(index.background[req.aspect]),
+        'background_size': len(index.backgrounds[species][req.aspect]) if species in index.backgrounds else 0,
         'versions': index.versions,
         'terms': [{**r.__dict__, 'genes': [names.get(g, str(g)) for g in r.genes],
                    'also': [{'term_id': t, 'name': n} for t, n in r.also]} for r in results],
