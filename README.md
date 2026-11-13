@@ -48,6 +48,23 @@ for every gene. Multi-gene searches run live (at most 4 at a time).
 | `GET /api/datasets/{id}` | Dataset metadata and conditions |
 | `GET /api/datasets/{id}/expression?genes=...` | Gene-centred values for heatmaps |
 | `POST /api/go-enrichment` `{"gene_ids": [...], "aspect": "P"}` | GO term enrichment |
+| `GET /api/datasets` | All datasets with publication details, tags and QC flags |
+| `GET /api/tags` | Dataset tags with counts |
+| `GET /api/expression-listing?genes=...&tags=...` | Datasets measuring the genes (listing mode, no search) |
+| `GET /api/datasets/{id}/download` | Expression matrix as searched, tab-separated |
+| `GET /api/info` | Counts and data versions |
+| `GET /embed?gene=ACT1&genes=10&sets=5` | Compact result page for iframes |
+
+`POST /api/search` also takes `"tags": [...]`: the search then runs only over datasets
+carrying any of those tags (old SPELL searched every dataset and only hid the others).
+
+Pages: search results (paged AG Grid tables with CSV download, GO enrichment, heatmaps of
+all listed datasets with scale and colour options, click a row for the gene's full
+profile), `#/datasets` (tag filter, text filter, search within tags), `#/expression/...`
+(listing mode), dataset pages (QC, download), `#/help` and `#/about`.
+
+Searches are logged monthly to `SPELL_NEXT_LOG_DIR` (default `<data>/logs`;
+empty disables) as `date, time, kind, genes, tags`, with no IP addresses.
 
 GO enrichment replaces SPELL's GO::TermFinder service. It needs `go-basic.obo`
 (purl.obolibrary.org/obo/go/go-basic.obo) and `gene_association.sgd.gaf.gz`

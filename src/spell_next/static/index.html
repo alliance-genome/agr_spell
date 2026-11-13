@@ -10,6 +10,7 @@
   <header class="top">
     <a class="brand" href="#/">SPELL <span>next</span></a>
     <span class="badge">prototype</span>
+    <nav class="nav"><a href="#/datasets">Datasets</a><a href="#/help">Help</a><a href="#/about">About</a></nav>
     <form id="search-form" class="search" autocomplete="off">
       <input id="search-input" type="search" placeholder="Gene name(s), e.g. ACT1 or RPL3 RPL4A RPS2"
              aria-label="Gene names">
@@ -18,6 +19,16 @@
   </header>
   <main id="app" aria-live="polite"></main>
   <div id="tooltip" class="tooltip" hidden></div>
+  <dialog id="profile" aria-labelledby="profile-title">
+    <header>
+      <div>
+        <h2 class="profile-title" id="profile-title"></h2>
+        <div class="profile-dataset"></div>
+      </div>
+      <form method="dialog"><button type="submit" aria-label="Close">Close</button></form>
+    </header>
+    <div class="profile-body"></div>
+  </dialog>
   <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@36.3.0/dist/ag-grid-community.min.js"></script>
   <script src="/static/app.js"></script>
 </body>

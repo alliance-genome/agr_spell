@@ -9,12 +9,18 @@ pytestmark = pytest.mark.skipif(not (BUILD / 'spell.sqlite').exists(), reason='n
 
 
 @pytest.fixture(scope='module')
-def client():
+def log_dir(tmp_path_factory):
+    return tmp_path_factory.mktemp('logs')
+
+
+@pytest.fixture(scope='module')
+def client(log_dir):
     os.environ['SPELL_NEXT_DATA'] = str(BUILD)
     from fastapi.testclient import TestClient
 
     from spell_next import api
     api.DATA_DIR = BUILD
+    api.LOG_DIR = str(log_dir)       # keep test searches out of the real logs
     with TestClient(api.app) as c:
         yield c
 
@@ -71,3 +77,66 @@ def test_go_enrichment_of_ribosomal_genes(client):
     assert 'translation' in top['name'] or 'ribosom' in top['name']
     assert top['list_count'] == 10 and top['fdr'] < 1e-6
     assert body['versions']['go_ontology']
+
+
+def test_expression_profile_with_raw_values(client):
+    act1 = client.get('/api/genes/lookup', params={'q': 'ACT1'}).json()['genes'][0]
+    ds_id = client.get('/api/genes/%d/coexpression' % act1['id']).json()['datasets'][0]['id']
+    row = client.get('/api/datasets/%d/expression' % ds_id,
+                     params={'genes': str(act1['id']), 'raw': 'true'}).json()['rows'][0]
+    present = [(c, r) for c, r in zip(row['values'], row['raw']) if c is not None]
+    offsets = {round(r - c, 2) for c, r in present}
+    assert len(offsets) == 1                     # centred = raw - the gene's mean
+    assert abs(sum(c for c, _ in present)) < 1e-2 * len(present)
+
+
+def test_dataset_listing_and_tags(client):
+    datasets = client.get('/api/datasets').json()
+    tags = client.get('/api/tags').json()
+    assert len(datasets) > 700
+    stress = next(t for t in tags if t['tag'] == 'stress')
+    assert stress['count'] == sum('stress' in d['tags'] for d in datasets)
+
+
+def test_search_restricted_to_tags(client):
+    tagged = {d['id'] for d in client.get('/api/datasets').json() if 'heat shock' in d['tags']}
+    body = client.post('/api/search', json={'genes': ['HSP104'], 'tags': ['heat shock']}).json()
+    assert body['source'] == 'live' and body['datasets_searched'] == len(tagged)
+    assert {d['id'] for d in body['datasets']} <= tagged
+    assert client.post('/api/search', json={'genes': ['HSP104'], 'tags': ['no such tag']}).status_code == 422
+
+
+def test_expression_listing(client):
+    body = client.get('/api/expression-listing', params={'genes': 'GAL1 GAL7 GAL10'}).json()
+    assert [g['standard'] for g in body['query']] == ['GAL1', 'GAL7', 'GAL10']
+    measured = [d['genes_measured'] for d in body['datasets']]
+    assert measured == sorted(measured, reverse=True) and measured[0] == 3
+    tagged = client.get('/api/expression-listing', params={'genes': 'GAL1', 'tags': 'heat shock'}).json()
+    assert 0 < len(tagged['datasets']) < len(body['datasets'])
+
+
+def test_dataset_download(client):
+    act1 = client.get('/api/genes/lookup', params={'q': 'ACT1'}).json()['genes'][0]
+    ds_id = client.get('/api/genes/%d/coexpression' % act1['id']).json()['datasets'][0]['id']
+    detail = client.get('/api/datasets/%d' % ds_id).json()
+    res = client.get('/api/datasets/%d/download' % ds_id)
+    assert res.status_code == 200 and 'attachment' in res.headers['content-disposition']
+    lines = res.text.rstrip('\n').split('\n')
+    assert lines[0].split('\t')[:2] == ['systematic_name', 'standard_name']
+    assert len(lines[0].split('\t')) == detail['num_conds'] + 2
+    assert len(lines) == detail['num_genes'] + 1
+    assert any(line.startswith('YFL039C\tACT1\t') for line in lines)
+
+
+def test_embed_page_and_info(client):
+    assert 'embed.js' in client.get('/embed', params={'gene': 'ACT1'}).text
+    info = client.get('/api/info').json()
+    assert info['datasets'] > 700 and info['versions']['go_ontology']
+
+
+def test_searches_are_logged_without_personal_data(client, log_dir):
+    client.post('/api/search', json={'genes': ['CLN1', 'CLN2'], 'limit': 5})
+    lines = [ln for f in log_dir.glob('searches_*.tsv') for ln in f.read_text().splitlines()]
+    multi = [ln.split('\t') for ln in lines if '\tmulti\t' in ln]
+    assert multi and multi[-1][3] == 'YMR199W,YPL256C'
+    assert all(len(ln.split('\t')) == 5 for ln in lines)

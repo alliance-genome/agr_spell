@@ -89,7 +89,8 @@ def main(args):
         counts = [c for (c,) in db.execute('SELECT COUNT(*) FROM coexpression_datasets WHERE rank<=10 '
                                            'GROUP BY dataset_id ORDER BY 1 DESC')]
         top = db.execute('SELECT d.filename, COUNT(*) FROM coexpression_datasets c JOIN datasets d '
-                         'ON d.id=c.dataset_id WHERE c.rank<=10 GROUP BY c.dataset_id ORDER BY 2 DESC LIMIT 3').fetchall()
+                         'ON d.id=c.dataset_id WHERE c.rank<=10 GROUP BY c.dataset_id '
+                         'ORDER BY 2 DESC LIMIT 3').fetchall()
         print('  %-24s max %4d, top-5 datasets share %4.1f%% of all top-10 slots; most frequent: %s' % (
             b, counts[0], 100 * sum(counts[:5]) / sum(counts), ', '.join('%s (%d)' % t for t in top)))
 

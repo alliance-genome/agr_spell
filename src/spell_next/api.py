@@ -9,20 +9,24 @@ import os
 import re
 import sqlite3
 import threading
+import warnings
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import numpy as np
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from spell_next.compendium import Compendium
 from spell_next.go import ASPECTS, GOIndex
 from spell_next.search import search
+from spell_next.searchlog import SearchLog
 
 DATA_DIR = Path(os.environ.get('SPELL_NEXT_DATA', 'data/build'))
+# Monthly search logs; set SPELL_NEXT_LOG_DIR to an empty string to disable.
+LOG_DIR = os.environ.get('SPELL_NEXT_LOG_DIR', str(DATA_DIR / 'logs'))
 STATIC_DIR = Path(__file__).parent / 'static'
 MAX_QUERY_GENES = 50
 MAX_LIVE_SEARCHES = 4
@@ -36,6 +40,7 @@ async def lifespan(app):
     state['comp'] = Compendium.load(DATA_DIR / 'compendium.npz')
     state['live'] = threading.BoundedSemaphore(MAX_LIVE_SEARCHES)
     state['go'] = load_go_index()
+    state['log'] = SearchLog(LOG_DIR or None)
     yield
     state.clear()
 
@@ -107,12 +112,14 @@ def lookup(q: str = Query(..., description='gene names separated by spaces or co
 
 
 @app.get('/api/genes/{gene_id}/coexpression')
-def coexpression(gene_id: int, limit: int = Query(50, le=100), datasets: int = Query(20, le=100)):
+def coexpression(gene_id: int, limit: int = Query(50, le=100), datasets: int = Query(100, le=100),
+                 via: str = Query('', pattern='^(|embed)$')):
     """Precomputed single-gene SPELL result."""
     with db() as con:
         query = gene_info(con, [gene_id]).get(gene_id)
         if query is None:
             raise HTTPException(404, 'unknown gene')
+        state['log'].record(via or 'single', [query['systematic']])
         hits = con.execute('SELECT hit_id, score FROM coexpression WHERE gene_id = ? AND rank <= ? '
                            'ORDER BY rank', (gene_id, limit)).fetchall()
         dsets = con.execute('SELECT dataset_id, weight FROM coexpression_datasets WHERE gene_id = ? '
@@ -130,29 +137,49 @@ def coexpression(gene_id: int, limit: int = Query(50, le=100), datasets: int = Q
 class SearchRequest(BaseModel):
     genes: list[str] = Field(..., min_length=1, max_length=MAX_QUERY_GENES)
     limit: int = Field(50, ge=1, le=100)
-    datasets: int = Field(20, ge=1, le=100)
+    datasets: int = Field(100, ge=1, le=100)
+    tags: list[str] = Field(default_factory=list, max_length=50,
+                            description='search only datasets carrying any of these tags')
+
+
+def split_tags(value):
+    return [t for t in (value or '').split('|') if t]
+
+
+def datasets_with_tags(con, tags):
+    wanted = set(tags)
+    return [r['id'] for r in con.execute('SELECT id, tags FROM datasets') if wanted & set(split_tags(r['tags']))]
 
 
 @app.post('/api/search')
 def live_search(req: SearchRequest):
     with db() as con:
         ids, unknown, ambiguous = resolve(con, req.genes)
+        dataset_ids = datasets_with_tags(con, req.tags) if req.tags else None
     if not ids:
         raise HTTPException(422, {'message': 'no recognised genes', 'unknown': unknown, 'ambiguous': ambiguous})
-    if len(ids) == 1:
-        result = coexpression(ids[0], req.limit, req.datasets)
-        return {**result, 'unknown': unknown, 'ambiguous': ambiguous}
+    if dataset_ids is not None and not dataset_ids:
+        raise HTTPException(422, {'message': 'no datasets carry the selected tags'})
+    if len(ids) == 1 and dataset_ids is None:
+        result = coexpression(ids[0], req.limit, req.datasets, '')
+        return {**result, 'unknown': unknown, 'ambiguous': ambiguous, 'tags': [], 'datasets_searched': None}
 
     sem = state['live']
     if not sem.acquire(timeout=30):
         raise HTTPException(503, 'search service busy, try again shortly')
     try:
-        result = search(state['comp'], ids, max_genes=req.limit, precision='float64')
+        result = search(state['comp'], ids, dataset_ids=dataset_ids, max_genes=req.limit, precision='float64')
     finally:
         sem.release()
 
     hits = [(g, s) for g, s in zip(result.gene_ids, result.gene_scores) if g not in ids][:req.limit]
-    dsets = list(zip(result.dataset_ids, result.dataset_weights))[:req.datasets]
+    names = [state['comp'].gene_names[state['comp'].index_of_id[g]] for g in ids]
+    state['log'].record('multi' if len(ids) > 1 else 'single', names, req.tags)
+    weights = result.dataset_weights
+    if weights is None:                       # single-gene search: weights only order the datasets
+        total = sum(result.raw_weights) or 1.0
+        weights = [w / total * 100 for w in result.raw_weights]
+    dsets = list(zip(result.dataset_ids, weights))[:req.datasets]
     with db() as con:
         ginfo = gene_info(con, ids + [g for g, _ in hits])
         dinfo = dataset_info(con, [d for d, _ in dsets])
@@ -161,7 +188,110 @@ def live_search(req: SearchRequest):
         'genes': [{**ginfo[g], 'score': s} for g, s in hits],
         'datasets': [{**dinfo[d], 'weight': w} for d, w in dsets],
         'unknown': unknown, 'ambiguous': ambiguous, 'source': 'live',
+        'tags': req.tags, 'datasets_searched': len(dataset_ids) if dataset_ids is not None else None,
     }
+
+
+@app.get('/api/datasets')
+def dataset_list():
+    """Every dataset with its publication details, tags and QC flags (for the dataset listing)."""
+    with db() as con:
+        has_qc = con.execute("SELECT 1 FROM sqlite_master WHERE name = 'dataset_qc'").fetchone()
+        qc_cols = ", q.scale, q.warnings" if has_qc else ""
+        qc_join = " LEFT JOIN dataset_qc q ON q.dataset_id = d.id" if has_qc else ""
+        rows = con.execute('SELECT d.id, d.title, d.first_author, d.year, d.journal, d.geo_id, d.pubmed_id, '
+                           'd.num_conds, d.num_genes, d.tags, d.has_metadata' + qc_cols +
+                           ' FROM datasets d' + qc_join + ' ORDER BY d.year DESC, d.id DESC').fetchall()
+    return [{**dict(r), 'tags': split_tags(r['tags'])} for r in rows]
+
+
+@app.get('/api/expression-listing')
+def expression_listing(genes: str = Query(..., description='gene names'), tags: str = Query('')):
+    """Datasets measuring the query genes, most variable first, without a co-expression search."""
+    names = [n for n in NAME_SEP.split(genes) if n][:MAX_QUERY_GENES]
+    tag_list = split_tags(tags)
+    with db() as con:
+        ids, unknown, ambiguous = resolve(con, names)
+        if not ids:
+            raise HTTPException(422, {'message': 'no recognised genes', 'unknown': unknown, 'ambiguous': ambiguous})
+        allowed = set(datasets_with_tags(con, tag_list)) if tag_list else None
+        query = gene_info(con, ids)
+    comp = state['comp']
+    rows = []
+    for ds in comp.datasets:
+        if allowed is not None and ds.id not in allowed:
+            continue
+        present = [ds.row_of[comp.index_of_id[g]] for g in ids if comp.index_of_id[g] in ds.row_of]
+        if not present:
+            continue
+        with warnings.catch_warnings():         # genes with no values in this dataset give NaN
+            warnings.simplefilter('ignore', RuntimeWarning)
+            spread = float(np.nanmean(np.nanvar(ds.values[present], axis=1)))
+        rows.append((ds.id, len(present), 0.0 if np.isnan(spread) else spread))
+    rows.sort(key=lambda r: (-r[1], -r[2]))
+    with db() as con:
+        dinfo = dataset_info(con, [r[0] for r in rows])
+    state['log'].record('listing', [query[i]['systematic'] for i in ids], tag_list)
+    return {
+        'query': [query[i] for i in ids], 'unknown': unknown, 'ambiguous': ambiguous, 'tags': tag_list,
+        'datasets': [{**dinfo[d], 'genes_measured': n, 'variance': v} for d, n, v in rows],
+    }
+
+
+@app.get('/api/datasets/{dataset_id}/download')
+def dataset_download(dataset_id: int):
+    """The dataset's expression matrix as searched (after QC), as tab-separated text."""
+    ds = next((d for d in state['comp'].datasets if d.id == dataset_id), None)
+    if ds is None:
+        raise HTTPException(404, 'unknown dataset')
+    comp = state['comp']
+    with db() as con:
+        std = {r['id']: r['standard'] for r in con.execute('SELECT id, standard FROM genes')}
+        geo = con.execute('SELECT geo_id FROM datasets WHERE id = ?', (dataset_id,)).fetchone()['geo_id']
+    def clean(text):
+        return str(text).replace('\t', ' ').replace('\n', ' ')
+
+    lines = ['\t'.join(['systematic_name', 'standard_name'] + [clean(c) for c in ds.conditions])]
+    for r, gi in enumerate(ds.gene_index):
+        gid = comp.gene_ids[gi]
+        vals = ['' if np.isnan(v) else '%.4g' % v for v in ds.values[r]]
+        lines.append('\t'.join([comp.gene_names[gi], std.get(gid) or ''] + vals))
+    name = '%s_spell-next_%d.tsv' % (geo or 'dataset', dataset_id)
+    return PlainTextResponse('\n'.join(lines) + '\n', media_type='text/tab-separated-values',
+                             headers={'Content-Disposition': 'attachment; filename="%s"' % name})
+
+
+@app.get('/api/info')
+def info():
+    """Counts and data versions for the help and about pages."""
+    with db() as con:
+        has = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        versions = dict(con.execute('SELECT key, value FROM build_info').fetchall()) if 'build_info' in has else {}
+        qc = dict(con.execute("SELECT scale, COUNT(*) FROM dataset_qc GROUP BY scale").fetchall()) \
+            if 'dataset_qc' in has else {}
+        flagged = con.execute("SELECT COUNT(*) FROM dataset_qc WHERE warnings != ''").fetchone()[0] \
+            if 'dataset_qc' in has else 0
+        return {
+            'datasets': con.execute('SELECT COUNT(*) FROM datasets').fetchone()[0],
+            'datasets_with_metadata': con.execute('SELECT SUM(has_metadata) FROM datasets').fetchone()[0],
+            'conditions': con.execute('SELECT SUM(num_conds) FROM datasets').fetchone()[0],
+            'genes': con.execute('SELECT COUNT(*) FROM genes').fetchone()[0],
+            'qc_scales': qc,
+            'qc_flagged': flagged,
+            'versions': versions,
+            'max_query_genes': MAX_QUERY_GENES,
+        }
+
+
+@app.get('/api/tags')
+def tag_list():
+    """Dataset tags with the number of datasets carrying each."""
+    counts = {}
+    with db() as con:
+        for (tags,) in con.execute('SELECT tags FROM datasets'):
+            for t in split_tags(tags):
+                counts[t] = counts.get(t, 0) + 1
+    return [{'tag': t, 'count': n} for t, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
 
 
 class EnrichmentRequest(BaseModel):
@@ -204,8 +334,10 @@ def dataset_detail(dataset_id: int):
 
 
 @app.get('/api/datasets/{dataset_id}/expression')
-def dataset_expression(dataset_id: int, genes: str = Query(..., description='comma-separated SPELL gene IDs')):
-    """Expression values (row-centred) for the requested genes, for heatmaps."""
+def dataset_expression(dataset_id: int, genes: str = Query(..., description='comma-separated SPELL gene IDs'),
+                       raw: bool = Query(False, description='also return values as stored (after QC)')):
+    """Expression values for the requested genes: centred on each gene's mean (for heatmaps)
+    and, with ``raw=true``, the stored values too."""
     ds = next((d for d in state['comp'].datasets if d.id == dataset_id), None)
     if ds is None:
         raise HTTPException(404, 'unknown dataset')
@@ -214,19 +346,29 @@ def dataset_expression(dataset_id: int, genes: str = Query(..., description='com
     except ValueError:
         raise HTTPException(422, 'genes must be numeric IDs')
     comp = state['comp']
+
+    def as_list(v):
+        return [None if np.isnan(x) else round(float(x), 3) for x in v]
+
     rows = []
     for gid in wanted:
         row = ds.row_of.get(comp.index_of_id.get(gid, -1))
         if row is None:
-            rows.append({'gene_id': gid, 'values': None})
+            rows.append({'gene_id': gid, 'values': None, **({'raw': None} if raw else {})})
             continue
         v = ds.values[row]
         centred = v - np.nanmean(v) if np.any(~np.isnan(v)) else v
-        rows.append({'gene_id': gid, 'values': [None if np.isnan(x) else round(float(x), 3) for x in centred]})
+        rows.append({'gene_id': gid, 'values': as_list(centred), **({'raw': as_list(v)} if raw else {})})
     return {'dataset_id': dataset_id, 'conditions': ds.conditions, 'rows': rows}
 
 
 app.mount('/static', StaticFiles(directory=STATIC_DIR), name='static')
+
+
+@app.get('/embed')
+def embed():
+    """Compact single-gene result for other sites to show in an iframe: /embed?gene=ACT1&genes=10&sets=5"""
+    return FileResponse(STATIC_DIR / 'embed.html')
 
 
 @app.get('/')

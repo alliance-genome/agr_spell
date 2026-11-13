@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SPELL next: co-expressed genes</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    body { background: var(--bg); }
+    main { max-width: none; padding: 8px 10px; }
+    h1 { font-size: 15px; margin: 0 0 6px; }
+    .embed-list { margin: 0 0 8px; padding: 0; list-style: none; font-size: 13px; }
+    .embed-list li { display: flex; gap: 8px; padding: 2px 0; border-bottom: 1px solid var(--border); }
+    .embed-list .rank { color: var(--muted); width: 22px; text-align: right; flex: none; }
+    .embed-list .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .embed-list .score { color: var(--muted); font-variant-numeric: tabular-nums; }
+    h2 { font-size: 13px; margin: 8px 0 4px; color: var(--muted); }
+    .more { font-size: 13px; }
+  </style>
+</head>
+<body>
+  <main id="embed" aria-live="polite"><p class="loading">Loading…</p></main>
+  <script src="/static/embed.js"></script>
+</body>
+</html>
