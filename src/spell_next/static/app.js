@@ -23,6 +23,42 @@ async function api(path, options) {
   return body;
 }
 
+// AG Grid: shared look and 10-row pages for every results table.
+agGrid.ModuleRegistry.registerModules([agGrid.AllCommunityModule]);
+const GRID_THEME = agGrid.themeQuartz.withPart(agGrid.colorSchemeVariable).withParams({ fontSize: 14, headerFontSize: 12 });
+const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
+const setGridMode = () => { document.body.dataset.agThemeMode = darkQuery.matches ? 'dark' : 'light'; };
+setGridMode();
+darkQuery.addEventListener('change', setGridMode);
+
+function makeGrid(container, columnDefs, rowData) {
+  return agGrid.createGrid(container, {
+    theme: GRID_THEME,
+    columnDefs,
+    rowData,
+    defaultColDef: { sortable: true, resizable: true, suppressMovable: true },
+    pagination: true,
+    paginationPageSize: 10,
+    paginationPageSizeSelector: [10, 25, 50],
+    domLayout: 'autoHeight',
+    rowHeight: 60,
+    suppressCellFocus: true,
+    enableCellTextSelection: true,
+  });
+}
+
+function cell(html) {
+  const div = document.createElement('div');
+  div.className = 'cell';
+  div.innerHTML = html;
+  return div;
+}
+
+function bar(text, fraction) {
+  return cell(`<div class="bar"><span>${esc(text)}</span>
+    <i style="width:${(100 * Math.max(0, Math.min(1, fraction))).toFixed(1)}%"></i></div>`);
+}
+
 function route() {
   const hash = decodeURIComponent(location.hash.slice(1));
   const [, view, arg] = hash.split('/');
@@ -90,29 +126,11 @@ function renderResults(r) {
     <div class="grid">
       <section>
         <h2>Co-expressed genes</h2>
-        <div class="table-wrap"><table>
-          <thead><tr><th>#</th><th>Gene</th><th>Score</th><th>Description</th></tr></thead>
-          <tbody>${r.genes.map((g, i) => `
-            <tr><td class="num">${i + 1}</td>
-              <td><a href="#/search/${encodeURIComponent(g.systematic)}">${esc(label(g))}</a>
-                <br><a class="sub nowrap" href="${sgdLink(g)}" target="_blank" rel="noopener">${esc(g.systematic)}&nbsp;↗</a></td>
-              <td class="bar"><span>${g.score.toFixed(2)}</span>
-                <i style="width:${(100 * g.score / maxScore).toFixed(1)}%"></i></td>
-              <td class="desc"><div title="${esc(g.description)}">${esc(g.description)}</div></td></tr>`).join('')}
-          </tbody></table></div>
+        <div id="genes-grid"></div>
       </section>
       <section>
         <h2>Most informative datasets</h2>
-        <div class="table-wrap"><table>
-          <thead><tr><th>#</th><th>Dataset</th><th>Weight</th></tr></thead>
-          <tbody>${r.datasets.map((d, i) => `
-            <tr><td class="num">${i + 1}</td>
-              <td><a href="#/dataset/${d.id}">${esc(d.title)}</a>
-                <br><span class="sub">${esc([d.first_author, d.year].filter(Boolean).join(' '))}
-                ${d.geo_id ? ' · ' + esc(d.geo_id) : ''} · ${d.num_conds} conditions</span></td>
-              <td class="bar"><span>${d.weight.toFixed(1)}%</span>
-                <i style="width:${(100 * d.weight / maxWeight).toFixed(1)}%"></i></td></tr>`).join('')}
-          </tbody></table></div>
+        <div id="datasets-grid"></div>
       </section>
     </div>
     <h2>GO enrichment of the top ${r.genes.length} genes</h2>
@@ -125,6 +143,27 @@ function renderResults(r) {
     <div class="legend"><span>lower</span><span class="ramp"></span>
       <span>higher than the gene's average in that dataset (±${CLIP} standard deviations)</span></div>
     <div id="heatmaps" class="heatmaps"></div>`;
+
+  makeGrid(document.getElementById('genes-grid'), [
+    { headerName: '#', field: 'rank', width: 64, type: 'numericColumn' },
+    { headerName: 'Gene', field: 'label', width: 150, cellRenderer: (c) => cell(
+      `<a href="#/search/${encodeURIComponent(c.data.systematic)}">${esc(c.value)}</a><br>
+       <a class="sub nowrap" href="${sgdLink(c.data)}" target="_blank" rel="noopener">${esc(c.data.systematic)}&nbsp;↗</a>`) },
+    { headerName: 'Score', field: 'score', width: 130, sort: 'desc',
+      cellRenderer: (c) => bar(c.value.toFixed(2), c.value / maxScore) },
+    { headerName: 'Description', field: 'description', flex: 1, minWidth: 220,
+      cellRenderer: (c) => cell(`<div class="clamp" title="${esc(c.value)}">${esc(c.value)}</div>`) },
+  ], r.genes.map((g, i) => ({ ...g, rank: i + 1, label: label(g) })));
+
+  makeGrid(document.getElementById('datasets-grid'), [
+    { headerName: '#', field: 'rank', width: 64, type: 'numericColumn' },
+    { headerName: 'Dataset', field: 'title', flex: 1, minWidth: 240, cellRenderer: (c) => cell(
+      `<div class="clamp1"><a href="#/dataset/${c.data.id}" title="${esc(c.value)}">${esc(c.value)}</a></div>
+       <span class="sub">${esc([c.data.first_author, c.data.year].filter(Boolean).join(' '))}
+       ${c.data.geo_id ? ' · ' + esc(c.data.geo_id) : ''} · ${c.data.num_conds} conditions</span>`) },
+    { headerName: 'Weight', field: 'weight', width: 120, sort: 'desc',
+      cellRenderer: (c) => bar(`${c.value.toFixed(1)}%`, c.value / maxWeight) },
+  ], r.datasets.map((d, i) => ({ ...d, rank: i + 1 })));
 
   const hitIds = r.genes.map((g) => g.id);
   document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => {
@@ -146,7 +185,7 @@ async function showEnrichment(geneIds, aspect) {
     e = await api('/api/go-enrichment', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ gene_ids: geneIds, aspect, max_results: 15 }),
+      body: JSON.stringify({ gene_ids: geneIds, aspect, max_results: 100 }),
     });
   } catch (err) {
     box.innerHTML = `<p class="notice">${esc(err.message)}</p>`;
@@ -160,22 +199,28 @@ async function showEnrichment(geneIds, aspect) {
     box.innerHTML = `<p class="sub">No ${esc(e.aspect.replace('_', ' '))} terms enriched at FDR &lt; 5%. ${source}</p>`;
     return;
   }
-  box.innerHTML = `<div class="table-wrap"><table>
-    <thead><tr><th>GO term</th><th>In list</th><th>Genome</th><th>Corrected p</th><th>FDR</th><th>Genes</th></tr></thead>
-    <tbody>${sig.map((t) => `<tr>
-      <td><a href="https://www.ebi.ac.uk/QuickGO/term/${encodeURIComponent(t.term_id)}" target="_blank"
-        rel="noopener">${esc(t.name)}</a><br><span class="sub nowrap">${esc(t.term_id)}</span>
-        ${t.also.length ? `<div class="also">also: ${t.also.map((a) => `<a href="https://www.ebi.ac.uk/QuickGO/term/${
-          encodeURIComponent(a.term_id)}" target="_blank" rel="noopener" title="${esc(a.term_id)}">${esc(a.name)}</a>`)
-          .join(', ')}</div>` : ''}</td>
-      <td class="num">${t.list_count}/${t.list_size}</td>
-      <td class="num">${t.background_count}/${t.background_size}</td>
-      <td class="num">${p(t.p_bonferroni)}</td>
-      <td class="num">${p(t.fdr)}</td>
-      <td class="desc"><div title="${esc(t.genes.join(', '))}">${t.genes.map(esc).join(', ')}</div></td>
-    </tr>`).join('')}</tbody></table></div>
+  const quickGO = (id) => `https://www.ebi.ac.uk/QuickGO/term/${encodeURIComponent(id)}`;
+  box.innerHTML = `<div id="go-grid"></div>
     <p class="sub">Hypergeometric test, Bonferroni-corrected p and Benjamini-Hochberg FDR. Terms with the same
       genes from the list as a higher-ranked term are listed under it ("also"). ${source}</p>`;
+  makeGrid(document.getElementById('go-grid'), [
+    { headerName: 'GO term', field: 'name', flex: 2, minWidth: 260, cellRenderer: (c) => cell(
+      `<a href="${quickGO(c.data.term_id)}" target="_blank" rel="noopener">${esc(c.value)}</a>
+       <span class="sub nowrap">${esc(c.data.term_id)}</span>
+       ${c.data.also.length ? `<div class="also clamp1" title="${esc(c.data.also.map((a) => a.name).join('; '))}">also:
+         ${c.data.also.map((a) => `<a href="${quickGO(a.term_id)}" target="_blank" rel="noopener">${esc(a.name)}</a>`)
+           .join(', ')}</div>` : ''}`) },
+    { headerName: 'In list', field: 'list_count', width: 100, type: 'numericColumn',
+      valueFormatter: (c) => `${c.value}/${c.data.list_size}` },
+    { headerName: 'Genome', field: 'background_count', width: 110, type: 'numericColumn',
+      valueFormatter: (c) => `${c.value}/${c.data.background_size}` },
+    { headerName: 'Corrected p', field: 'p_bonferroni', width: 125, type: 'numericColumn',
+      valueFormatter: (c) => p(c.value) },
+    { headerName: 'FDR', field: 'fdr', width: 100, type: 'numericColumn', sort: 'asc',
+      valueFormatter: (c) => p(c.value) },
+    { headerName: 'Genes', field: 'genes', flex: 2, minWidth: 220, sortable: false,
+      cellRenderer: (c) => cell(`<div class="clamp" title="${esc(c.value.join(', '))}">${c.value.map(esc).join(', ')}</div>`) },
+  ], sig);
 }
 
 async function drawHeatmap(box, dataset, genes, nQuery) {

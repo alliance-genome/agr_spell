@@ -76,16 +76,14 @@ h2 { font-size: 17px; margin: 24px 0 8px; }
 .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; }
 @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
 
-.table-wrap { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; font-size: 14px; }
-th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
-th { color: var(--muted); font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: .03em; }
-td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-td.desc { color: var(--muted); max-width: 360px; }
-td.desc div {
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+/* AG Grid cells: let content wrap and centre it vertically in the fixed row height. */
+.ag-cell .cell {
+  display: flex; flex-direction: column; justify-content: center; height: 100%;
+  line-height: 1.35; white-space: normal; overflow: hidden;
 }
-td.bar { width: 110px; white-space: nowrap; }
+.cell .sub { margin: 0; font-size: 13px; }
+.clamp { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; color: var(--muted); }
+.clamp1 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .bar span { display: block; font-variant-numeric: tabular-nums; }
 .bar i { display: block; height: 6px; margin-top: 3px; background: var(--bar); border-radius: 3px; }
 
