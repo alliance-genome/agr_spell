@@ -28,6 +28,7 @@ ssh -i agr-sgd-dev-ec2.pem -L 8001:localhost:8001 ubuntu@<instance>
 | --- | --- |
 | Check inputs after editing `raw/` | `./spellctl validate sgd` |
 | Build and go live (validates first; keeps the old build) | `./spellctl rebuild sgd` |
+| Follow a rebuild (or see how the last one ended) | `./spellctl rebuild-log sgd` |
 | Undo the last rebuild | `./spellctl rollback sgd` |
 | Go back to a specific build | `./spellctl rollback sgd 20261113-160000` |
 | See builds and container state | `./spellctl status sgd` |
@@ -36,9 +37,15 @@ ssh -i agr-sgd-dev-ec2.pem -L 8001:localhost:8001 ubuntu@<instance>
 **Adding a dataset:** copy the PCL file to `/srv/spell/sgd/raw/expression/`, add
 `<ID>\t<file name>` to `raw/dataset_list.txt` (validate prints the next free ID), add a
 row to `raw/meta/datasets.tsv` (file name, GEO ID, PubMed ID, title, ... tags), then
-`./spellctl validate sgd` and `./spellctl rebuild sgd`. A rebuild takes about 15-20
-minutes for SGD; the site keeps serving the old build until it finishes. Errors stop
-the rebuild before anything changes. Per-dataset results are in
+`./spellctl validate sgd` and `./spellctl rebuild sgd`.
+
+A rebuild runs in the background, so you can log out; the site keeps serving the old
+build until the new one is ready, then switches and restarts by itself. On the dev
+instance (m6i.xlarge, builds on 3 vCPUs) an SGD rebuild takes about 80 minutes: ~25 for
+QC, ~50 to precompute every gene. `./spellctl status sgd` shows progress, and
+`/srv/spell/sgd/rebuild.log` keeps the full output. Errors stop the rebuild before anything
+changes; only one rebuild per MOD runs at a time. Use `./spellctl rebuild sgd --wait` to
+stay attached instead. Per-dataset results are in
 `/srv/spell/sgd/validation_report.tsv`; QC results in `current/qc_report.tsv`.
 
 ## Admin tasks

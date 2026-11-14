@@ -33,6 +33,7 @@ RUN useradd --create-home --uid 1000 spell
 USER spell
 
 EXPOSE 8000
+# One-off containers (validate, rebuild; SPELL_ONEOFF=1) run no web app, so they pass trivially.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/info', timeout=4)"
+    CMD [ "$SPELL_ONEOFF" = "1" ] || python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/info', timeout=4)"
 CMD ["spell", "serve", "/srv/spell", "--host", "0.0.0.0", "--port", "8000"]

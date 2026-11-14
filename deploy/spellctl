@@ -1,25 +1,28 @@
 #!/usr/bin/env bash
 # Operate the spell-next containers on the host.
 #
-#   ./spellctl validate MOD       check MOD's inputs (no changes)
-#   ./spellctl rebuild MOD        validate, build, switch to the new build, restart MOD's app
+#   ./spellctl validate MOD          check MOD's inputs (no changes)
+#   ./spellctl rebuild MOD [--wait]  validate, build, switch to the new build, restart MOD's app.
+#                                    Runs in the background (safe to log out); --wait stays attached.
+#   ./spellctl rebuild-log MOD       follow the running (or show the last) rebuild's log
 #   ./spellctl rollback MOD [BUILD]  serve the previous (or given) build, restart
-#   ./spellctl status MOD         live build and build history
+#   ./spellctl status MOD            live build, build history, rebuild in progress
 #   ./spellctl start|stop|restart MOD
-#   ./spellctl logs MOD           follow the app's log
-#   ./spellctl init MOD CONFIG    create MOD's directory from a config template (configs/*.toml)
-#   ./spellctl image              (re)build the Docker image from this checkout
+#   ./spellctl logs MOD              follow the app's log
+#   ./spellctl init MOD CONFIG       create MOD's directory from a config template (configs/*.toml)
+#   ./spellctl image                 (re)build the Docker image from this checkout
 #
 # MOD is sgd or wb. Data lives in ${SPELL_DATA_ROOT:-/srv/spell}/MOD.
 set -euo pipefail
 
 cd "$(dirname "$0")"
+SELF="$(pwd)/$(basename "$0")"
 DATA_ROOT=${SPELL_DATA_ROOT:-/srv/spell}
 BUILD_CPUS=${SPELL_BUILD_CPUS:-3}          # leave a core for the running apps during a rebuild
 BUILD_MEM=${SPELL_BUILD_MEM:-10g}
 COMPOSE=(docker compose --profile wb)
 
-usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
 
 service_of() {
   case "$1" in
@@ -28,10 +31,38 @@ service_of() {
   esac
 }
 
-# Run a spell command in a one-off container that mounts MOD's directory.
+# Run a spell command in a one-off container that mounts MOD's directory. -T and </dev/null:
+# no terminal or input (works detached, and never swallows a calling script's stdin);
+# SPELL_ONEOFF tells the image's health check there is no web app.
 spell_run() {
   local mod=$1; shift
-  SPELL_CPUS=$BUILD_CPUS SPELL_MEM=$BUILD_MEM "${COMPOSE[@]}" run --rm --no-deps "$(service_of "$mod")" spell "$@"
+  SPELL_CPUS=$BUILD_CPUS SPELL_MEM=$BUILD_MEM "${COMPOSE[@]}" run --rm --no-deps -T -e SPELL_ONEOFF=1 \
+    "$(service_of "$mod")" spell "$@" < /dev/null
+}
+
+rebuild_log() { echo "$DATA_ROOT/$1/rebuild.log"; }
+rebuild_pid() { echo "$DATA_ROOT/$1/rebuild.pid"; }
+
+# PID of MOD's running rebuild, if any.
+rebuild_running() {
+  local pidfile; pidfile=$(rebuild_pid "$1")
+  [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null && cat "$pidfile"
+}
+
+# The rebuild itself (also what the detached job runs). Holds a lock so rebuilds of one MOD never overlap.
+do_rebuild() {
+  local mod=$1 lock="$DATA_ROOT/$1/rebuild.lock"
+  exec 9>"$lock"
+  if ! flock -n 9; then echo "spellctl: another rebuild of $mod is running" >&2; return 1; fi
+  echo "spellctl: rebuild of $mod started $(date '+%Y-%m-%d %H:%M:%S')"
+  if spell_run "$mod" rebuild /srv/spell --workers "$BUILD_CPUS"; then
+    "${COMPOSE[@]}" up -d "$(service_of "$mod")"
+    "${COMPOSE[@]}" restart "$(service_of "$mod")"
+    echo "spellctl: rebuild of $mod FINISHED $(date '+%Y-%m-%d %H:%M:%S'); the new build is live"
+  else
+    echo "spellctl: rebuild of $mod FAILED $(date '+%Y-%m-%d %H:%M:%S'); the previous build is still live"
+    return 1
+  fi
 }
 
 cmd=${1:-}; [ -n "$cmd" ] || usage; shift
@@ -47,17 +78,38 @@ case "$cmd" in
   validate)
     spell_run "${1:?MOD}" validate /srv/spell --workers "$BUILD_CPUS" ;;
   rebuild)
-    mod=${1:?MOD}
-    spell_run "$mod" rebuild /srv/spell --workers "$BUILD_CPUS"
-    "${COMPOSE[@]}" up -d "$(service_of "$mod")"
-    "${COMPOSE[@]}" restart "$(service_of "$mod")" ;;
+    mod=${1:?MOD}; service_of "$mod" >/dev/null
+    if pid=$(rebuild_running "$mod"); then
+      echo "A rebuild of $mod is already running (pid $pid). Follow it: ./spellctl rebuild-log $mod"; exit 1
+    fi
+    if [ "${2:-}" = "--wait" ]; then
+      do_rebuild "$mod" 2>&1 | tee "$(rebuild_log "$mod")"
+    else
+      nohup "$SELF" _rebuild "$mod" > "$(rebuild_log "$mod")" 2>&1 < /dev/null &
+      echo $! > "$(rebuild_pid "$mod")"
+      echo "Rebuild of $mod started in the background (pid $!); the current build stays live until it finishes."
+      echo "Follow it: ./spellctl rebuild-log $mod    Check it: ./spellctl status $mod"
+    fi ;;
+  _rebuild)
+    do_rebuild "${1:?MOD}" ;;
+  rebuild-log)
+    mod=${1:?MOD}; log=$(rebuild_log "$mod")
+    [ -f "$log" ] || { echo "No rebuild log yet for $mod."; exit 0; }
+    if rebuild_running "$mod" >/dev/null; then tail -n 30 -f "$log"; else tail -n 40 "$log"; fi ;;
   rollback)
     mod=${1:?MOD}
     if [ -n "${2:-}" ]; then spell_run "$mod" rollback /srv/spell --to "$2"; else spell_run "$mod" rollback /srv/spell; fi
     "${COMPOSE[@]}" restart "$(service_of "$mod")" ;;
   status)
-    spell_run "${1:?MOD}" status /srv/spell
-    "${COMPOSE[@]}" ps "$(service_of "$1")" ;;
+    mod=${1:?MOD}
+    spell_run "$mod" status /srv/spell
+    "${COMPOSE[@]}" ps "$(service_of "$mod")"
+    log=$(rebuild_log "$mod")
+    if pid=$(rebuild_running "$mod"); then
+      echo; echo "Rebuild in progress (pid $pid); latest: $(grep -E '^(spellctl|mod|compendium|qc|precomputing|  [0-9]+/)' "$log" | tail -1)"
+    elif [ -f "$log" ]; then
+      echo; echo "Last rebuild: $(grep '^spellctl: rebuild' "$log" | tail -1)"
+    fi ;;
   migrate-metadata)
     spell_run "${1:?MOD}" migrate-metadata /srv/spell ;;
   start)

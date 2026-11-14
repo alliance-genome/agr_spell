@@ -54,6 +54,8 @@ def restart(cmd):
     if cmd:
         print('restarting: %s' % cmd)
         subprocess.run(cmd, shell=True, check=True)
+    elif os.environ.get('SPELL_ONEOFF') == '1':
+        print('spellctl restarts the web app next.')
     else:
         print('Restart the web app to serve it (or pass --restart-cmd / set SPELL_RESTART_CMD).')
 
