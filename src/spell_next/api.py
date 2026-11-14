@@ -26,7 +26,9 @@ from spell_next.go import ASPECTS, GOIndex
 from spell_next.search import search
 from spell_next.searchlog import SearchLog
 
-DATA_DIR = Path(os.environ.get('SPELL_NEXT_DATA', 'data/build'))
+# Resolved once at start-up: a rebuild may repoint ROOT/current, but a running server keeps
+# reading the build whose compendium it loaded until it is restarted.
+DATA_DIR = Path(os.path.realpath(os.environ.get('SPELL_NEXT_DATA', 'data/build')))
 # Monthly search logs; set SPELL_NEXT_LOG_DIR to an empty string to disable.
 LOG_DIR = os.environ.get('SPELL_NEXT_LOG_DIR', str(DATA_DIR / 'logs'))
 STATIC_DIR = Path(__file__).parent / 'static'

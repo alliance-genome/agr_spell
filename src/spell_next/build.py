@@ -333,6 +333,54 @@ def precompute(db, npz_path, gene_ids, workers):
     db.commit()
 
 
+def run_build(raw_dir, out_dir, workers=None, limit=None, no_qc=False, centre=False):
+    """Build OUT_DIR from RAW_DIR; returns the path of the SQLite file."""
+    workers = workers or os.cpu_count()
+    os.makedirs(out_dir, exist_ok=True)
+    npz_path = os.path.join(out_dir, 'compendium.npz')
+    db_path = os.path.join(out_dir, 'spell.sqlite')
+
+    t0 = time.time()
+    cfg = modconfig.load(raw_dir)
+    print('mod: %s (%s)' % (cfg['mod']['id'], cfg['mod']['name']))
+    comp = Compendium.from_spell_files(raw_dir, faithful=False, dedupe=True)
+    print('compendium: %d datasets, %d genes (%.0fs)' % (len(comp.datasets), len(comp.gene_ids), time.time() - t0))
+
+    if os.path.exists(db_path):
+        os.remove(db_path)
+    db = sqlite3.connect(db_path)
+    write_metadata(db, comp, read_gene_info(raw_dir, cfg), read_dataset_info(raw_dir, cfg),
+                   cfg['genes'].get('default_species'))
+    db.executemany('INSERT OR REPLACE INTO build_info VALUES (?,?)',
+                   [('config', json.dumps(modconfig.public(cfg))), ('mod', cfg['mod']['id']),
+                    ('built', time.strftime('%Y-%m-%d %H:%M:%S'))])
+    db.commit()
+    n_meta = db.execute('SELECT SUM(has_metadata), COUNT(*) FROM datasets').fetchone()
+    print('metadata: %d/%d datasets have publication metadata' % n_meta)
+    species = db.execute('SELECT species, COUNT(*) FROM datasets GROUP BY species ORDER BY 2 DESC').fetchall()
+    print('species: ' + ', '.join('%s (%d datasets)' % s for s in species))
+
+    write_go_tables(db, raw_dir, cfg)
+
+    if not no_qc:
+        apply_qc(db, comp, workers, centre=centre)
+        write_qc_report(db, os.path.join(out_dir, 'qc_report.tsv'))
+    else:
+        # Datasets without a .sinfo file still need their z statistics.
+        for ds in comp.datasets:
+            if ds.z_mean != ds.z_mean or ds.z_std != ds.z_std:
+                ds.z_mean, ds.z_std = qc.pair_stats(ds.values)
+    comp.save(npz_path)
+
+    gene_ids = comp.gene_ids[:limit] if limit else comp.gene_ids
+    print('precomputing %d genes with %d workers...' % (len(gene_ids), workers))
+    precompute(db, npz_path, gene_ids, workers)
+    db.execute('VACUUM')
+    db.close()
+    print('done in %.0fs: %s' % (time.time() - t0, db_path))
+    return db_path
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('raw_dir')
@@ -343,43 +391,7 @@ def main():
     ap.add_argument('--centre', action='store_true',
                     help='also centre each condition on its median (off by default: lowers the GO benchmark)')
     args = ap.parse_args()
-
-    os.makedirs(args.out_dir, exist_ok=True)
-    npz_path = os.path.join(args.out_dir, 'compendium.npz')
-    db_path = os.path.join(args.out_dir, 'spell.sqlite')
-
-    t0 = time.time()
-    cfg = modconfig.load(args.raw_dir)
-    print('mod: %s (%s)' % (cfg['mod']['id'], cfg['mod']['name']))
-    comp = Compendium.from_spell_files(args.raw_dir, faithful=False, dedupe=True)
-    print('compendium: %d datasets, %d genes (%.0fs)' % (len(comp.datasets), len(comp.gene_ids), time.time() - t0))
-
-    if os.path.exists(db_path):
-        os.remove(db_path)
-    db = sqlite3.connect(db_path)
-    write_metadata(db, comp, read_gene_info(args.raw_dir, cfg), read_dataset_info(args.raw_dir, cfg),
-                   cfg['genes'].get('default_species'))
-    db.executemany('INSERT OR REPLACE INTO build_info VALUES (?,?)',
-                   [('config', json.dumps(modconfig.public(cfg))), ('mod', cfg['mod']['id'])])
-    db.commit()
-    n_meta = db.execute('SELECT SUM(has_metadata), COUNT(*) FROM datasets').fetchone()
-    print('metadata: %d/%d datasets have publication metadata' % n_meta)
-    species = db.execute('SELECT species, COUNT(*) FROM datasets GROUP BY species ORDER BY 2 DESC').fetchall()
-    print('species: ' + ', '.join('%s (%d datasets)' % s for s in species))
-
-    write_go_tables(db, args.raw_dir, cfg)
-
-    if not args.no_qc:
-        apply_qc(db, comp, args.workers, centre=args.centre)
-        write_qc_report(db, os.path.join(args.out_dir, 'qc_report.tsv'))
-    comp.save(npz_path)
-
-    gene_ids = comp.gene_ids[:args.limit] if args.limit else comp.gene_ids
-    print('precomputing %d genes with %d workers...' % (len(gene_ids), args.workers))
-    precompute(db, npz_path, gene_ids, args.workers)
-    db.execute('VACUUM')
-    db.close()
-    print('done in %.0fs: %s' % (time.time() - t0, db_path))
+    run_build(args.raw_dir, args.out_dir, args.workers, args.limit, args.no_qc, args.centre)
 
 
 if __name__ == '__main__':

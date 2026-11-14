@@ -149,7 +149,9 @@ class Compendium:
             if filename not in parsed:
                 path = os.path.join(expr_dir, filename)
                 conds, gene_index, values = read_pcl(path, name_to_index, faithful)
-                z_mean, z_std = read_sinfo(path + '.sinfo')
+                # .sinfo holds Spell++'s z statistics; new datasets need none (the build recomputes them).
+                sinfo = path + '.sinfo'
+                z_mean, z_std = read_sinfo(sinfo) if os.path.exists(sinfo) else (math.nan, math.nan)
                 parsed[filename] = (conds, gene_index, values, z_mean, z_std)
             conds, gene_index, values, z_mean, z_std = parsed[filename]
             datasets.append(Dataset(ds_id, filename, conds, gene_index, values, z_mean, z_std))

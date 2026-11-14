@@ -26,6 +26,40 @@ from spell_next.compendium import Compendium
 Compendium.from_spell_files('data/raw', faithful=True).save('data/compendium_faithful.npz')
 ```
 
+## Curator workflow
+
+Each instance lives in one directory (`ROOT`, or set `SPELL_ROOT`):
+
+```
+ROOT/raw/       inputs curators edit: mod.toml, gene_list.txt, dataset_list.txt, expression/, meta/
+ROOT/builds/    one directory per build (YYYYMMDD-HHMMSS); the last 3 are kept
+ROOT/current    symlink to the build being served
+ROOT/logs/      monthly search logs (kept across builds)
+```
+
+| Command | What it does |
+| --- | --- |
+| `spell init ROOT --config configs/sgd.toml` | Create the layout and copy a config template |
+| `spell validate ROOT` | Check inputs without building; errors block a rebuild, warnings do not; writes `validation_report.tsv` |
+| `spell rebuild ROOT` | Validate, build into `builds/<time>`, smoke-test, compare with the live build, switch `current`, prune |
+| `spell rebuild ROOT --no-switch` | Build and compare, but keep serving the current build |
+| `spell rollback ROOT [--to BUILD]` | Serve the previous (or a chosen) build again |
+| `spell status ROOT` | Live build and build history |
+| `spell serve ROOT --port 8000` | Run the web app on the live build |
+| `spell migrate-metadata ROOT` | One-off: turn the old SPELL metadata export into `meta/datasets.tsv` |
+
+`rebuild` and `rollback` run `--restart-cmd` (or `$SPELL_RESTART_CMD`) afterwards; a running
+server keeps serving the build it started with until it is restarted.
+
+**Adding a dataset:** put the PCL file in `raw/expression/`, add `<new ID>\t<file>` to
+`raw/dataset_list.txt` (`spell validate` prints the next free ID), add a row to
+`raw/meta/datasets.tsv`, then `spell validate ROOT` and `spell rebuild ROOT`. No `.sinfo`
+file is needed. To remove a dataset, delete its line from `dataset_list.txt` and rebuild.
+
+Validation on the current SGD inputs: 0 errors, 265 warnings, including 99 datasets with
+fewer than 5 conditions (never searched, in old SPELL either), 56 where under half the
+rows match known genes, and 24 without metadata.
+
 ## One instance per MOD
 
 Each MOD (SGD, WormBase, ...) runs its own instance from the same code, configured by

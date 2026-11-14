@@ -9,8 +9,11 @@ description = "Prototype replacement for SPELL query-driven co-expression search
 requires-python = ">=3.12"
 dependencies = ["numpy>=2.0", "fastapi>=0.110", "uvicorn[standard]>=0.29"]
 
+[project.scripts]
+spell = "spell_next.cli:main"
+
 [project.optional-dependencies]
-dev = ["pytest>=8", "httpx>=0.27"]
+dev = ["pytest>=8", "httpx>=0.27", "pyflakes>=3"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
