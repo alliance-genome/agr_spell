@@ -297,6 +297,9 @@ def cmd_migrate_metadata(args):
 
 
 def main(argv=None):
+    # Workers are processes; keep BLAS single-threaded in each (set before numpy is imported).
+    for var in ('OPENBLAS_NUM_THREADS', 'OMP_NUM_THREADS', 'MKL_NUM_THREADS'):
+        os.environ.setdefault(var, '1')
     ap = argparse.ArgumentParser(prog='spell', description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest='command', required=True)

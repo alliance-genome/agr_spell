@@ -16,6 +16,8 @@ deviation of Fisher z over all gene pairs), which SPELL's scores are standardize
 """
 import numpy as np
 
+from spell_next.search import centre_rows
+
 UNLOGGED_MAX = 100.0       # log-scale expression values never get this large
 SHIFT_WARN = 1.0           # spread of condition medians (log units) worth reporting
 FISHER_LIMIT = 0.999999
@@ -26,7 +28,7 @@ def pairwise_pearson(values, rows=None):
     pairwise-complete conditions (NaN = missing). Returns a len(rows) x n matrix."""
     mask = ~np.isnan(values)
     m = mask.astype(np.float64)
-    x = np.where(mask, values, 0.0)
+    x = np.where(mask, centre_rows(values), 0.0)     # centred: stable for near-constant genes
     rows = slice(None) if rows is None else rows
     mi, xi = m[rows], x[rows]
     n = mi @ m.T

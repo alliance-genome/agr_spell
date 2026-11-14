@@ -6,9 +6,14 @@ FROM python:3.13-slim
 ARG AG_GRID_VERSION=36.3.0
 ARG AG_GRID_SHA256=5fc8736cc0726dcd2e2901681180462fe4d1a519b31a2b4ab7268a97a52a3532
 
+# Builds parallelise with worker processes; one BLAS thread each avoids oversubscribing the
+# container's CPU quota (4 visible cores x 3 workers was throttled most of the time).
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    SPELL_ROOT=/srv/spell
+    SPELL_ROOT=/srv/spell \
+    OPENBLAS_NUM_THREADS=1 \
+    OMP_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1
 
 WORKDIR /app
 COPY pyproject.toml README.md ./

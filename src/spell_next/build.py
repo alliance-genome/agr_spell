@@ -22,6 +22,8 @@ import time
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
 
+import numpy as np
+
 from spell_next import go, modconfig, qc
 from spell_next.compendium import Compendium
 from spell_next.search import search
@@ -234,12 +236,14 @@ def write_metadata(db, comp, genes, datasets, default_species=None):
 def _qc_one(values, centre=False):
     diag = qc.diagnose(values)
     scale = 'empty' if diag['empty'] else qc.classify_scale(diag)
-    z_before = qc.pair_stats(values)[0]
     new_values, actions, warnings = qc.normalize(values, centre=centre)
     # Report condition shifts on the corrected scale (log units), before any centring.
     rescaled = new_values if not centre else qc.normalize(values)[0]
     spread = qc.diagnose(rescaled).get('cond_median_spread')
     z_after, z_std = qc.pair_stats(new_values)
+    # Most datasets are left unchanged; then the "before" statistics are the same (and costly).
+    unchanged = np.array_equal(new_values, values, equal_nan=True)
+    z_before = z_after if unchanged else qc.pair_stats(values)[0]
     return new_values, scale, actions, warnings, spread, z_before, z_after, z_std
 
 
@@ -318,7 +322,24 @@ def _search_one(gene_id):
     return gene_id, hits, dsets
 
 
-def precompute(db, npz_path, gene_ids, workers):
+def precompute(db, comp, npz_path, gene_ids, workers):
+    """Store the top genes and datasets for every gene, computed dataset by dataset."""
+    from spell_next.precompute import precompute_all
+
+    t0 = time.time()
+    results = precompute_all(comp, npz_path, TOP_GENES, TOP_DATASETS, workers)
+    for gene_id in gene_ids:
+        hits, dsets = results[gene_id]
+        db.executemany('INSERT INTO coexpression VALUES (?,?,?,?)',
+                       [(gene_id, r, g, s) for r, (g, s) in enumerate(hits, 1)])
+        db.executemany('INSERT INTO coexpression_datasets VALUES (?,?,?,?)',
+                       [(gene_id, r, d, w) for r, (d, w) in enumerate(dsets, 1)])
+    db.commit()
+    print('  stored %d genes (%.0fs)' % (len(gene_ids), time.time() - t0))
+
+
+def precompute_per_gene(db, npz_path, gene_ids, workers):
+    """Reference implementation: one search per gene (slow; used to check precompute)."""
     t0, done = time.time(), 0
     with ProcessPoolExecutor(workers, initializer=_init_worker, initargs=(npz_path,)) as pool:
         for gene_id, hits, dsets in pool.map(_search_one, gene_ids, chunksize=8):
@@ -333,7 +354,7 @@ def precompute(db, npz_path, gene_ids, workers):
     db.commit()
 
 
-def run_build(raw_dir, out_dir, workers=None, limit=None, no_qc=False, centre=False):
+def run_build(raw_dir, out_dir, workers=None, limit=None, no_qc=False, centre=False, per_gene=False):
     """Build OUT_DIR from RAW_DIR; returns the path of the SQLite file."""
     workers = workers or os.cpu_count()
     os.makedirs(out_dir, exist_ok=True)
@@ -374,7 +395,10 @@ def run_build(raw_dir, out_dir, workers=None, limit=None, no_qc=False, centre=Fa
 
     gene_ids = comp.gene_ids[:limit] if limit else comp.gene_ids
     print('precomputing %d genes with %d workers...' % (len(gene_ids), workers))
-    precompute(db, npz_path, gene_ids, workers)
+    if per_gene:
+        precompute_per_gene(db, npz_path, gene_ids, workers)
+    else:
+        precompute(db, comp, npz_path, gene_ids, workers)
     db.execute('VACUUM')
     db.close()
     print('done in %.0fs: %s' % (time.time() - t0, db_path))
@@ -390,8 +414,10 @@ def main():
     ap.add_argument('--no-qc', action='store_true', help='skip normalization (use values as published)')
     ap.add_argument('--centre', action='store_true',
                     help='also centre each condition on its median (off by default: lowers the GO benchmark)')
+    ap.add_argument('--per-gene', action='store_true',
+                    help='precompute with one search per gene (slow reference implementation)')
     args = ap.parse_args()
-    run_build(args.raw_dir, args.out_dir, args.workers, args.limit, args.no_qc, args.centre)
+    run_build(args.raw_dir, args.out_dir, args.workers, args.limit, args.no_qc, args.centre, args.per_gene)
 
 
 if __name__ == '__main__':

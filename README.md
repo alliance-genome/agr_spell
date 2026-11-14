@@ -167,11 +167,26 @@ over 4,565 annotated genes, with paired bootstrap 95% CIs against corrected math
 | + condition centring | 0.1080 | −0.0037 (−0.0048 to −0.0027) |
 | Old SPELL arithmetic (float32) | 0.1140 | +0.0023 (+0.0015 to +0.0030) |
 | Old SPELL parsing, float64 | — | +0.0002 (−0.0002 to +0.0005) |
+| Current: + centred genes, capped Fisher input | 0.1143 | +0.0025 (+0.0019 to +0.0032) |
 | Random hits | 0.0103 | |
 
-The float32 edge comes from the unstable correlation formula, which inflates
-correlations among abundant, low-variance genes; those are heavily co-annotated in GO,
-so the benchmark rewards the error. Correct arithmetic is kept.
+The first float64 port still had two numerical problems, fixed in the current version:
+near-constant genes gave correlations of ±1 through rounding (genes are now centred
+before correlating), and |r| was capped at 0.999999 only when it reached 1 exactly, so
+values a rounding step below 1 gave Fisher z ~19 and let one degenerate gene pair (zero
+in all conditions but one) outweigh hundreds of datasets (|r| is now always capped).
+With both fixed, the float64 version scores above old SPELL; the float32 version's
+earlier edge came from the same kind of instability, not better biology.
+
+## Build speed
+
+`spell_next.precompute` computes all single-gene results dataset by dataset (each
+dataset's correlations once, in row blocks) instead of one search per gene; it matches
+the per-gene search exactly (`tests/test_precompute.py`; `build --per-gene` runs the slow
+reference). QC computes each dataset's pair statistics once unless normalization changed
+it. BLAS runs single-threaded in each worker process (multi-threaded BLAS in 3 workers
+oversubscribed the container's CPU quota). A full SGD build with 3 workers takes ~3.5
+minutes on an Apple M-series Mac and ~19 minutes on the m6i.xlarge dev instance (was 78).
 
 ## Validation against production
 

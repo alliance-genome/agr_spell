@@ -14,7 +14,8 @@ implemented here:
 
 ``precision='float32'`` reproduces Spell++ arithmetic: single-precision values and
 running sums, and the one-pass Pearson formula, which loses accuracy badly for some
-gene pairs. ``precision='float64'`` computes the same quantities accurately.
+gene pairs. ``precision='float64'`` computes the same quantities accurately, on values
+centred per gene (the one-pass formula is unstable for near-constant genes otherwise).
 """
 import math
 from dataclasses import dataclass
@@ -70,10 +71,23 @@ class _Arith:
 
     def values(self, ds):
         if self.dtype is np.float64:
-            return ds.values
+            # Centre each gene on its mean: correlations are unchanged mathematically, but the
+            # one-pass formula no longer loses all precision for near-constant genes.
+            if getattr(ds, '_centred', None) is None:
+                ds._centred = centre_rows(ds.values)
+            return ds._centred
         if getattr(ds, '_values32', None) is None:
             ds._values32 = ds.values.astype(np.float32)
         return ds._values32
+
+
+def centre_rows(values):
+    """Subtract each row's mean over its present values (rows with no values stay NaN)."""
+    present = ~np.isnan(values)
+    n = present.sum(axis=1)
+    with np.errstate(invalid='ignore', divide='ignore'):
+        mean = np.where(present, values, 0.0).sum(axis=1) / n
+    return values - np.where(n > 0, mean, 0.0)[:, None]
 
 
 def pearson_with_row(values, row, ar):
@@ -96,7 +110,13 @@ def pearson_with_row(values, row, ar):
 
 def fisher_z(r, ar):
     lim = ar.f(0.999999)
-    r = np.where(r <= -1, -lim, np.where(r >= 1, lim, r)).astype(ar.dtype)
+    if ar.dtype is np.float64:
+        # Cap |r| at 0.999999 like Spell++ intends. Spell++ only caps |r| >= 1, which in double
+        # precision lets values a rounding step below 1 through (z ~ 19 instead of 7.3), so a
+        # single near-constant gene pair could outweigh hundreds of datasets.
+        r = np.clip(r, -lim, lim)
+    else:
+        r = np.where(r <= -1, -lim, np.where(r >= 1, lim, r)).astype(ar.dtype)
     with np.errstate(divide='ignore', invalid='ignore'):
         return ar.f(0.5) * np.log((ar.f(1) + r) / (ar.f(1) - r))
 

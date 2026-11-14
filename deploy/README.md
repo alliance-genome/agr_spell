@@ -41,8 +41,8 @@ row to `raw/meta/datasets.tsv` (file name, GEO ID, PubMed ID, title, ... tags), 
 
 A rebuild runs in the background, so you can log out; the site keeps serving the old
 build until the new one is ready, then switches and restarts by itself. On the dev
-instance (m6i.xlarge, builds on 3 vCPUs) an SGD rebuild takes about 80 minutes: ~25 for
-QC, ~50 to precompute every gene. `./spellctl status sgd` shows progress, and
+instance (m6i.xlarge, builds on 3 vCPUs) an SGD rebuild takes about 20 minutes: ~7 for
+QC, ~10 to precompute every gene. `./spellctl status sgd` shows progress, and
 `/srv/spell/sgd/rebuild.log` keeps the full output. Errors stop the rebuild before anything
 changes; only one rebuild per MOD runs at a time. Use `./spellctl rebuild sgd --wait` to
 stay attached instead. Per-dataset results are in
