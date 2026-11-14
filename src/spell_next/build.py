@@ -228,7 +228,7 @@ def write_metadata(db, comp, genes, datasets, default_species=None):
             (meta and meta['title']) or geo or ds.filename,
             meta and meta['description'], meta and meta['first_author'], meta and meta['authors'],
             meta and meta['journal'], meta and meta['year'], meta and meta['tags'],
-            ds.num_conds, len(ds.gene_index), int(meta is not None), species))
+            ds.num_conds, len(ds.gene_index), int(bool(meta and meta.get('title'))), species))
 
 
 def _qc_one(values, centre=False):

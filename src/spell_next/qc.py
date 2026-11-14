@@ -21,36 +21,51 @@ SHIFT_WARN = 1.0           # spread of condition medians (log units) worth repor
 FISHER_LIMIT = 0.999999
 
 
-def pairwise_pearson(values):
-    """All-pairs Pearson correlation using pairwise-complete conditions (NaN = missing)."""
+def pairwise_pearson(values, rows=None):
+    """Pearson correlation of the given rows (default: all) with every row, using
+    pairwise-complete conditions (NaN = missing). Returns a len(rows) x n matrix."""
     mask = ~np.isnan(values)
     m = mask.astype(np.float64)
     x = np.where(mask, values, 0.0)
-    n = m @ m.T
-    sx = x @ m.T                      # sum of row i's values where row j is also present
-    sxx = (x * x) @ m.T
-    sxy = x @ x.T
+    rows = slice(None) if rows is None else rows
+    mi, xi = m[rows], x[rows]
+    n = mi @ m.T
+    sx = xi @ m.T                     # sum of row i's values where row j is also present
+    sy = mi @ x.T                     # sum of row j's values where row i is also present
+    sxx = (xi * xi) @ m.T
+    syy = mi @ (x * x).T
+    sxy = xi @ x.T
     with np.errstate(divide='ignore', invalid='ignore'):
-        num = sxy - sx * sx.T / n
-        den = np.sqrt((sxx - sx * sx / n) * (sxx.T - sx.T * sx.T / n))
-        r = num / den
+        r = (sxy - sx * sy / n) / np.sqrt((sxx - sx * sx / n) * (syy - sy * sy / n))
     r[n < 3] = np.nan
     return np.clip(r, -1.0, 1.0)
 
 
-def pair_stats(values, max_genes=None, seed=0):
-    """Mean and population SD of Fisher z over all gene pairs (as Spell++ writes .sinfo)."""
+def pair_stats(values, max_genes=None, seed=0, block=1024):
+    """Mean and population SD of Fisher z over all gene pairs (as Spell++ writes .sinfo).
+
+    Rows are processed in blocks so memory stays near block x genes rather than genes x genes.
+    """
     if max_genes is not None and values.shape[0] > max_genes:
         rows = np.random.default_rng(seed).choice(values.shape[0], max_genes, replace=False)
         values = values[rows]
-    r = pairwise_pearson(values)
-    iu = np.triu_indices(r.shape[0], k=1)
-    r = np.clip(r[iu], -FISHER_LIMIT, FISHER_LIMIT)
-    z = 0.5 * np.log((1 + r) / (1 - r))
-    z = z[~np.isnan(z)]
-    if z.size == 0:
+    n_genes = values.shape[0]
+    total = total_sq = 0.0
+    count = 0
+    for i0 in range(0, n_genes, block):
+        i1 = min(n_genes, i0 + block)
+        r = pairwise_pearson(values, slice(i0, i1))
+        upper = np.arange(n_genes)[None, :] > np.arange(i0, i1)[:, None]      # pairs j > i only
+        r = np.clip(r[upper], -FISHER_LIMIT, FISHER_LIMIT)
+        z = 0.5 * np.log((1 + r) / (1 - r))
+        z = z[~np.isnan(z)]
+        total += float(z.sum())
+        total_sq += float((z * z).sum())
+        count += z.size
+    if count == 0:
         return float('nan'), float('nan')
-    return float(z.mean()), float(z.std())
+    mean = total / count
+    return mean, float(np.sqrt(max(0.0, total_sq / count - mean * mean)))
 
 
 def diagnose(values):

@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Operate the spell-next containers on the host.
+#
+#   ./spellctl validate MOD       check MOD's inputs (no changes)
+#   ./spellctl rebuild MOD        validate, build, switch to the new build, restart MOD's app
+#   ./spellctl rollback MOD [BUILD]  serve the previous (or given) build, restart
+#   ./spellctl status MOD         live build and build history
+#   ./spellctl start|stop|restart MOD
+#   ./spellctl logs MOD           follow the app's log
+#   ./spellctl init MOD CONFIG    create MOD's directory from a config template (configs/*.toml)
+#   ./spellctl image              (re)build the Docker image from this checkout
+#
+# MOD is sgd or wb. Data lives in ${SPELL_DATA_ROOT:-/srv/spell}/MOD.
+set -euo pipefail
+
+cd "$(dirname "$0")"
+DATA_ROOT=${SPELL_DATA_ROOT:-/srv/spell}
+BUILD_CPUS=${SPELL_BUILD_CPUS:-3}          # leave a core for the running apps during a rebuild
+BUILD_MEM=${SPELL_BUILD_MEM:-10g}
+COMPOSE=(docker compose --profile wb)
+
+usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+
+service_of() {
+  case "$1" in
+    sgd|wb) echo "spell-$1" ;;
+    *) echo "unknown MOD '$1' (use sgd or wb)" >&2; exit 1 ;;
+  esac
+}
+
+# Run a spell command in a one-off container that mounts MOD's directory.
+spell_run() {
+  local mod=$1; shift
+  SPELL_CPUS=$BUILD_CPUS SPELL_MEM=$BUILD_MEM "${COMPOSE[@]}" run --rm --no-deps "$(service_of "$mod")" spell "$@"
+}
+
+cmd=${1:-}; [ -n "$cmd" ] || usage; shift
+case "$cmd" in
+  image)
+    # Every MOD uses the same image, so build it once (through the SGD service).
+    "${COMPOSE[@]}" build spell-sgd ;;
+  init)
+    mod=${1:?MOD}; config=${2:?CONFIG, e.g. ../configs/sgd.toml}
+    mkdir -p "$DATA_ROOT/$mod/raw/expression" "$DATA_ROOT/$mod/raw/meta" "$DATA_ROOT/$mod/builds" "$DATA_ROOT/$mod/logs"
+    [ -e "$DATA_ROOT/$mod/raw/mod.toml" ] || cp "$config" "$DATA_ROOT/$mod/raw/mod.toml"
+    echo "Created $DATA_ROOT/$mod. Add its inputs under raw/, then: ./spellctl validate $mod" ;;
+  validate)
+    spell_run "${1:?MOD}" validate /srv/spell --workers "$BUILD_CPUS" ;;
+  rebuild)
+    mod=${1:?MOD}
+    spell_run "$mod" rebuild /srv/spell --workers "$BUILD_CPUS"
+    "${COMPOSE[@]}" up -d "$(service_of "$mod")"
+    "${COMPOSE[@]}" restart "$(service_of "$mod")" ;;
+  rollback)
+    mod=${1:?MOD}
+    if [ -n "${2:-}" ]; then spell_run "$mod" rollback /srv/spell --to "$2"; else spell_run "$mod" rollback /srv/spell; fi
+    "${COMPOSE[@]}" restart "$(service_of "$mod")" ;;
+  status)
+    spell_run "${1:?MOD}" status /srv/spell
+    "${COMPOSE[@]}" ps "$(service_of "$1")" ;;
+  migrate-metadata)
+    spell_run "${1:?MOD}" migrate-metadata /srv/spell ;;
+  start)
+    "${COMPOSE[@]}" up -d "$(service_of "${1:?MOD}")" ;;
+  stop|restart)
+    "${COMPOSE[@]}" "$cmd" "$(service_of "${1:?MOD}")" ;;
+  logs)
+    "${COMPOSE[@]}" logs -f --tail 100 "$(service_of "${1:?MOD}")" ;;
+  *)
+    usage ;;
+esac

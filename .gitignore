@@ -5,3 +5,6 @@ __pycache__/
 
 # Expression data and validation output copied from the SPELL server
 data/
+
+# AG Grid, downloaded into the Docker image at build time
+src/spell_next/static/vendor/

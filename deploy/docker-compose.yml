@@ -1,0 +1,37 @@
+# One container per MOD from the same image; each mounts its own instance directory.
+# Ports are bound to localhost only: reach them over SSH (ssh -L 8001:localhost:8001 ...)
+# or put a reverse proxy in front once public host names are decided.
+#
+# Data on the host (override with SPELL_DATA_ROOT):
+#   ${SPELL_DATA_ROOT:-/srv/spell}/sgd  ->  SGD instance (raw/, builds/, current, logs/)
+#   ${SPELL_DATA_ROOT:-/srv/spell}/wb   ->  WormBase instance (enable with --profile wb)
+
+x-spell: &spell
+  image: spell-next:${SPELL_IMAGE_TAG:-latest}
+  build:
+    context: ..
+  restart: unless-stopped
+  user: "${SPELL_UID:-1000}:${SPELL_GID:-1000}"
+  deploy:
+    resources:
+      limits:
+        cpus: "${SPELL_CPUS:-2}"      # spellctl raises these for one-off build containers
+        memory: "${SPELL_MEM:-6g}"
+
+services:
+  spell-sgd:
+    <<: *spell
+    container_name: spell-sgd
+    ports:
+      - "127.0.0.1:8001:8000"
+    volumes:
+      - ${SPELL_DATA_ROOT:-/srv/spell}/sgd:/srv/spell
+
+  spell-wb:
+    <<: *spell
+    container_name: spell-wb
+    profiles: ["wb"]
+    ports:
+      - "127.0.0.1:8002:8000"
+    volumes:
+      - ${SPELL_DATA_ROOT:-/srv/spell}/wb:/srv/spell

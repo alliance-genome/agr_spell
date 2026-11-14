@@ -60,6 +60,12 @@ Validation on the current SGD inputs: 0 errors, 265 warnings, including 99 datas
 fewer than 5 conditions (never searched, in old SPELL either), 56 where under half the
 rows match known genes, and 24 without metadata.
 
+## Deployment
+
+`Dockerfile` builds one image for all MODs (AG Grid included, checksum-pinned).
+`deploy/docker-compose.yml` runs one container per MOD and `deploy/spellctl` wraps the
+curator commands; see [deploy/README.md](deploy/README.md).
+
 ## One instance per MOD
 
 Each MOD (SGD, WormBase, ...) runs its own instance from the same code, configured by

@@ -29,7 +29,9 @@
     </header>
     <div class="profile-body"></div>
   </dialog>
-  <script src="https://cdn.jsdelivr.net/npm/ag-grid-community@36.3.0/dist/ag-grid-community.min.js"></script>
+  <!-- AG Grid ships in the Docker image (static/vendor); without it (local development) fall back to the CDN. -->
+  <script src="/static/vendor/ag-grid-community.min.js"
+          onerror="document.write('<script src=&quot;https://cdn.jsdelivr.net/npm/ag-grid-community@36.3.0/dist/ag-grid-community.min.js&quot;><\/script>')"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

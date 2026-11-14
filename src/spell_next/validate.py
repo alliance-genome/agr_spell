@@ -163,10 +163,10 @@ def _check_metadata(report, raw_dir, cfg, gene_names, filenames):
             report.add('warning', cfg['genes']['file'], '%d of %d genes in gene_list.txt have no entry'
                        % (unknown, len(gene_names)))
     meta = read_dataset_info(raw_dir, cfg)
-    missing = [f for f in filenames if f not in meta]
+    missing = [f for f in filenames if not (meta.get(f) or {}).get('title')]
     if missing:
         report.add('warning', cfg['datasets']['metadata'] or 'datasets',
-                   '%d datasets have no metadata row (shown by file name): %s%s'
+                   '%d datasets have no metadata title (shown by file name): %s%s'
                    % (len(missing), ', '.join(missing[:5]), ' …' if len(missing) > 5 else ''))
     extra = sorted(set(meta) - set(filenames))
     if extra:
