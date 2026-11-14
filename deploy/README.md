@@ -43,10 +43,52 @@ ssh -i agr-sgd-dev-ec2.pem -L 8001:localhost:8001 ubuntu@<instance>
 | See builds and container state | `./spellctl status sgd` |
 | Follow the app log | `./spellctl logs sgd` |
 
-**Adding a dataset:** copy the PCL file to `/srv/spell/sgd/raw/expression/`, add
-`<ID>\t<file name>` to `raw/dataset_list.txt` (validate prints the next free ID), add a
-row to `raw/meta/datasets.tsv` (file name, GEO ID, PubMed ID, title, ... tags), then
-`./spellctl validate sgd` and `./spellctl rebuild sgd`.
+### Adding a dataset
+
+All of a MOD's inputs live under `/srv/spell/<mod>/raw/` (SGD shown; use `wb` for WormBase).
+
+1. **Copy the expression file** to `raw/expression/`:
+
+   ```bash
+   scp GSE123456.final.pcl spell-dev:/srv/spell/sgd/raw/expression/
+   ```
+
+   PCL format: tab-separated, header `YORF  NAME  GWEIGHT  <condition 1>  <condition 2> ...`,
+   an optional `EWEIGHT` row, then one row per gene keyed by systematic name (e.g.
+   `YFL039C`). Leave missing values empty. log2 data is expected; unlogged intensities or
+   ratios are detected, converted and flagged by QC. Datasets with fewer than 5 conditions
+   are listed but not searched. A `.sinfo` file is optional (the build computes it).
+
+2. **Register it** in `raw/dataset_list.txt`: append `<ID><TAB><file name>`, e.g.
+   `3051	GSE123456.final.pcl`. `./spellctl validate sgd` prints the next free ID. IDs must be
+   unique but need not be in order.
+
+3. **Add its metadata** to `raw/meta/datasets.tsv`, one tab-separated row:
+
+   ```
+   filename  geo_id  pubmed_id  title  description  first_author  authors  journal  year  tags
+   ```
+
+   `filename` must match `dataset_list.txt`. `tags` are `|`-separated (e.g.
+   `stress|heat shock`); reuse existing tag names so the datasets page filter groups them.
+   A row without a `title` counts as no metadata (validate warns).
+
+4. **Validate** (changes nothing): `./spellctl validate sgd`. It checks the PCL format,
+   unknown genes, duplicate IDs and missing metadata; fix errors before continuing.
+
+5. **Rebuild**: `./spellctl rebuild sgd`, then `./spellctl rebuild-log sgd` or
+   `./spellctl status sgd` to follow it (see below).
+
+6. **Check** the dataset on the site's Datasets page and its QC flags in
+   `/srv/spell/sgd/current/qc_report.tsv`. If anything is wrong, `./spellctl rollback sgd`
+   returns to the previous build instantly (the last 3 builds are kept).
+
+Add several datasets at once and rebuild once; the rebuild time hardly changes. To remove a
+dataset, delete its line from `dataset_list.txt` (and optionally its metadata row) and
+rebuild. Files must be readable by uid 1000 (the `ubuntu` user), which files copied in as
+`ubuntu` are.
+
+### Rebuilds
 
 A rebuild runs in the background, so you can log out; the site keeps serving the old
 build until the new one is ready, then switches and restarts by itself. On the dev
@@ -62,8 +104,10 @@ stay attached instead. Per-dataset results are in
 | Task | Command |
 | --- | --- |
 | First set-up of a MOD | `./spellctl init wb ../configs/wb.example.toml`, fill `raw/`, `./spellctl rebuild wb` |
-| Rebuild the image after a code update | `./spellctl image`, then `./spellctl restart sgd` |
+| Rebuild the image after a code update | `git pull`, `./spellctl image`, `./spellctl start sgd` |
 | Start / stop an app | `./spellctl start sgd`, `./spellctl stop sgd` |
+
+`start` recreates the container on the new image; `restart` would keep running the old one.
 
 Containers restart automatically after a reboot (`restart: unless-stopped`). Each app
 is limited to 2 CPUs and 6 GB of memory; builds get 3 CPUs and 10 GB
