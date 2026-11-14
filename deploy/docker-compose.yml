@@ -1,6 +1,7 @@
 # One container per MOD from the same image; each mounts its own instance directory.
-# Ports are bound to localhost only: reach them over SSH (ssh -L 8001:localhost:8001 ...)
-# or put a reverse proxy in front once public host names are decided.
+# Ports are bound to localhost by default (reach them over SSH: ssh -L 8001:localhost:8001 ...).
+# Behind a load balancer set SPELL_BIND=0.0.0.0 in deploy/.env and allow the port only from
+# the load balancer's security group.
 #
 # Data on the host (override with SPELL_DATA_ROOT):
 #   ${SPELL_DATA_ROOT:-/srv/spell}/sgd  ->  SGD instance (raw/, builds/, current, logs/)
@@ -23,7 +24,7 @@ services:
     <<: *spell
     container_name: spell-sgd
     ports:
-      - "127.0.0.1:8001:8000"
+      - "${SPELL_BIND:-127.0.0.1}:8001:8000"
     volumes:
       - ${SPELL_DATA_ROOT:-/srv/spell}/sgd:/srv/spell
 
@@ -32,6 +33,6 @@ services:
     container_name: spell-wb
     profiles: ["wb"]
     ports:
-      - "127.0.0.1:8002:8000"
+      - "${SPELL_BIND:-127.0.0.1}:8002:8000"
     volumes:
       - ${SPELL_DATA_ROOT:-/srv/spell}/wb:/srv/spell

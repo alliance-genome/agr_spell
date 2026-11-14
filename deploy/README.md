@@ -15,7 +15,16 @@ build being served) and `logs/` (monthly search logs). Override the location wit
 
 ## Opening the site
 
-Ports are not public. With the instance's SSH key:
+SGD dev: **https://spell.dev.yeastgenome.org/** (public). How it is wired:
+
+| Piece | Setting |
+| --- | --- |
+| DNS | CNAME `spell.dev.yeastgenome.org` → `app-qa-lb` (Route 53 zone yeastgenome.org, sgd-prod account) |
+| HTTPS | `app-qa-lb` (agr-sgd-dev), certificate `*.dev.yeastgenome.org`; HTTP redirects to HTTPS |
+| Routing | listener rule 75: host `spell.dev.yeastgenome.org` → target group `spell-dev` (instance port 8001, health check `/api/info`) |
+| Instance | `deploy/.env` sets `SPELL_BIND=0.0.0.0`; security group `spell-dev-from-alb` allows 8001 only from the load balancer |
+
+Without a load balancer, ports stay on localhost. With the instance's SSH key:
 
 ```bash
 ssh -i agr-sgd-dev-ec2.pem -L 8001:localhost:8001 ubuntu@<instance>
