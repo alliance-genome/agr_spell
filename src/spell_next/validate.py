@@ -158,9 +158,13 @@ def validate(raw_dir, workers=None):
 
 
 def _check_assays(report, cfg, meta, filenames):
-    """Warn about unknown assays and RNA-seq files that are not on a log scale."""
+    """Warn about missing or unknown assays and RNA-seq files that are not on a log scale."""
     where = cfg['datasets']['metadata'] or 'datasets'
     allowed = cfg['datasets']['assays']
+    missing = [f for f in filenames if not (meta.get(f) or {}).get('assay')]
+    if missing:
+        report.add('warning', where, '%d datasets have no assay (they are left out when users filter by assay): '
+                   '%s%s' % (len(missing), ', '.join(missing[:3]), ' …' if len(missing) > 3 else ''))
     unknown = sorted({m['assay'] for f in filenames if (m := meta.get(f)) and m.get('assay')} - set(allowed))
     for a in unknown:
         names = [f for f in filenames if (meta.get(f) or {}).get('assay') == a]

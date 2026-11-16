@@ -99,6 +99,14 @@ def test_validate_checks_rnaseq_values(root, capsys, values, value_type, message
     assert message in capsys.readouterr().out
 
 
+def test_validate_flags_missing_assays(root, capsys):
+    assert run('validate', root, '--workers', '2') == 0
+    assert 'have no assay' not in capsys.readouterr().out       # the toy datasets all have one
+    add_dataset(root / 'raw', 'N.pcl', 9, 'No assay')                 # its metadata row has no assay column
+    assert run('validate', root, '--workers', '2') == 0
+    assert '1 datasets have no assay' in capsys.readouterr().out
+
+
 def test_validate_flags_unknown_assays(root, capsys):
     tsv = root / 'raw' / 'meta' / 'datasets.tsv'
     tsv.write_text(tsv.read_text().replace('\tmicroarray\t', '\tmicro-array\t'))

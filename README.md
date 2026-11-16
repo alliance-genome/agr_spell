@@ -87,7 +87,7 @@ name used in the PCL files), `mod_id`, `standard`, `aliases` (`|`-separated),
 `year`, `tags` (`|`-separated), `assay` (one of `[datasets] assays`, by default
 `microarray` or `RNA-seq`) and `value_type` (what the values are, e.g. `log2 TMM CPM`,
 `log2 TPM`, `vst`, `log2 ratio`). The site filters searches, listings and the dataset list
-by assay; `spell validate` warns about unknown assays, RNA-seq datasets without a
+by assay; `spell validate` warns about missing or unknown assays, RNA-seq datasets without a
 `value_type`, and RNA-seq values that are not log-scale (raw counts or TPM/FPKM).
 
 Several species can share one instance (e.g. WormBase's nematodes). Each dataset's
