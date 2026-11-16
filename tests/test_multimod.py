@@ -71,6 +71,31 @@ def test_aliases_and_dataset_table_metadata(client):
     assert datasets['GSE9003']['title'] == 'Beta worm study 0' and datasets['GSE9003']['tags'] == ['stress']
 
 
+def test_assay_fields_and_counts(client):
+    assert client.get('/api/assays').json() == [{'assay': 'RNA-seq', 'count': 2}, {'assay': 'microarray', 'count': 2}]
+    datasets = {d['geo_id']: d for d in client.get('/api/datasets').json()}
+    assert (datasets['GSE9001']['assay'], datasets['GSE9001']['value_type']) == ('RNA-seq', 'log2 TPM')
+    assert (datasets['GSE9002']['assay'], datasets['GSE9002']['value_type']) == ('microarray', None)
+    assert client.get('/api/datasets/1').json()['assay'] == 'RNA-seq'
+    assert client.get('/api/config').json()['assays'] == ['microarray', 'RNA-seq']
+
+
+@pytest.mark.parametrize('genes', [['a-1'], ['a-1', 'a-2']])
+def test_search_restricted_to_an_assay(client, genes):
+    body = client.post('/api/search', json={'genes': genes, 'assay': 'RNA-seq'}).json()
+    assert body['assay'] == 'RNA-seq' and body['datasets_searched'] == 2
+    assert {d['assay'] for d in body['datasets']} == {'RNA-seq'}
+    both = client.post('/api/search', json={'genes': genes, 'assay': 'microarray', 'tags': ['growth']}).json()
+    assert {(d['assay'], d['tags']) for d in both['datasets']} == {('microarray', 'growth')}
+    assert client.post('/api/search', json={'genes': genes, 'assay': 'microarray', 'tags': ['stress']}
+                       ).status_code == 422                        # no microarray dataset is tagged stress
+
+
+def test_expression_listing_restricted_to_an_assay(client):
+    body = client.get('/api/expression-listing', params={'genes': 'a-1', 'assay': 'microarray'}).json()
+    assert body['assay'] == 'microarray' and [d['geo_id'] for d in body['datasets']] == ['GSE9002']
+
+
 def test_bad_config_is_rejected(tmp_path):
     (tmp_path / 'mod.toml').write_text('[genes]\nformat = "excel"\n')
     with pytest.raises(modconfig.ConfigError):

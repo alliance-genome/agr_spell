@@ -78,6 +78,39 @@ def test_validate_reports_errors(root, capsys, breakage, message):
     assert message in capsys.readouterr().out
 
 
+def add_rnaseq(raw, name, ds_id, values, value_type=''):
+    lines = ['ID\tNAME\tGWEIGHT\t' + '\t'.join('c%d' % c for c in range(N_CONDS))]
+    lines += ['A%d\tA%d\t1\t' % (i, i) + '\t'.join(values(i, c) for c in range(N_CONDS)) for i in range(1, 13)]
+    (raw / 'expression' / name).write_text('\n'.join(lines) + '\n')
+    with open(raw / 'dataset_list.txt', 'a') as fh:
+        fh.write('%d\t%s\n' % (ds_id, name))
+    with open(raw / 'meta' / 'datasets.tsv', 'a') as fh:
+        fh.write('%s\tGSE%d\tRNA %d\tCurator C\t2026\tstress\tRNA-seq\t%s\n' % (name, 8000 + ds_id, ds_id, value_type))
+
+
+@pytest.mark.parametrize('values, value_type, message', [
+    (lambda i, c: '%d' % (50 * i + 37 * c), 'raw counts', 'look like raw read counts'),
+    (lambda i, c: '%.3f' % (50.5 * i + 37.25 * c), 'TPM', 'not log-scale'),
+    (lambda i, c: '%.3f' % (1 + 0.1 * i + 0.05 * c), '', 'RNA-seq datasets have no value_type'),
+])
+def test_validate_checks_rnaseq_values(root, capsys, values, value_type, message):
+    add_rnaseq(root / 'raw', 'R.pcl', 9, values, value_type)
+    assert run('validate', root, '--workers', '2') == 0               # warnings only
+    assert message in capsys.readouterr().out
+
+
+def test_validate_flags_unknown_assays(root, capsys):
+    tsv = root / 'raw' / 'meta' / 'datasets.tsv'
+    tsv.write_text(tsv.read_text().replace('\tmicroarray\t', '\tmicro-array\t'))
+    assert run('validate', root, '--workers', '2') == 0
+    assert "assay 'micro-array' is not one of microarray, RNA-seq" in capsys.readouterr().out
+    capsys.readouterr()
+    (root / 'raw' / 'mod.toml').write_text((root / 'raw' / 'mod.toml').read_text().replace(
+        '[datasets]', '[datasets]\nassays = ["microarray", "micro-array", "RNA-seq"]'))
+    assert run('validate', root, '--workers', '2') == 0
+    assert 'is not one of' not in capsys.readouterr().out
+
+
 def test_rebuild_add_dataset_rollback_and_prune(root, capsys):
     restart_marker = root / 'restarted'
     assert run('rebuild', root, '--workers', '2', '--restart-cmd', 'touch %s' % restart_marker) == 0
@@ -141,7 +174,7 @@ def test_migrate_metadata_from_old_spell_export(root):
     (raw / 'mod.toml').write_text(toml)
     assert run('migrate-metadata', root) == 0
     cfg = modconfig.load(str(raw))
-    assert cfg['datasets'] == {'metadata': 'meta/datasets.tsv', 'format': 'dataset_table'}
+    assert (cfg['datasets']['metadata'], cfg['datasets']['format']) == ('meta/datasets.tsv', 'dataset_table')
     rows = (raw / 'meta' / 'datasets.tsv').read_text().splitlines()
     assert rows[0].startswith('filename\tgeo_id\tpubmed_id\ttitle')
     assert any(r.startswith('A_set0.pcl\t\t123\tOld title\tOld summary\tSmith J') for r in rows)

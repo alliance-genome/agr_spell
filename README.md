@@ -84,7 +84,11 @@ SGD defaults apply. Templates: `configs/sgd.toml`, `configs/wb.example.toml`.
 name used in the PCL files), `mod_id`, `standard`, `aliases` (`|`-separated),
 `species`, `description`, `qualifier`. `dataset_table` likewise: `filename` (required),
 `geo_id`, `pubmed_id`, `title`, `description`, `first_author`, `authors`, `journal`,
-`year`, `tags` (`|`-separated).
+`year`, `tags` (`|`-separated), `assay` (one of `[datasets] assays`, by default
+`microarray` or `RNA-seq`) and `value_type` (what the values are, e.g. `log2 TMM CPM`,
+`log2 TPM`, `vst`, `log2 ratio`). The site filters searches, listings and the dataset list
+by assay; `spell validate` warns about unknown assays, RNA-seq datasets without a
+`value_type`, and RNA-seq values that are not log-scale (raw counts or TPM/FPKM).
 
 Several species can share one instance (e.g. WormBase's nematodes). Each dataset's
 species is the species of most of its genes; a gene only occurs in its own species'

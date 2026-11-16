@@ -112,20 +112,46 @@ function bar(text, fraction) {
 function route() {
   const [path, qs] = location.hash.slice(1).split('?');
   const [, view, arg] = path.split('/').map((p) => decodeURIComponent(p || ''));
-  const tags = (new URLSearchParams(qs || '').get('tags') || '').split('|').filter(Boolean);
-  if (view === 'search' && arg) return showSearch(arg, tags);
+  const params = new URLSearchParams(qs || '');
+  const filter = { tags: (params.get('tags') || '').split('|').filter(Boolean), assay: params.get('assay') || '' };
+  if (view === 'search' && arg) return showSearch(arg, filter);
   if (view === 'dataset' && arg) return showDataset(Number(arg));
-  if (view === 'datasets') return showDatasets(tags);
-  if (view === 'expression' && arg) return showListing(arg, tags);
+  if (view === 'datasets') return showDatasets(filter);
+  if (view === 'expression' && arg) return showListing(arg, filter);
   if (view === 'help') return showHelp();
   if (view === 'about') return showAbout();
   return showHome();
 }
 
-const searchHash = (query, tags = []) =>
-  `#/search/${encodeURIComponent(query)}${tags.length ? `?tags=${encodeURIComponent(tags.join('|'))}` : ''}`;
-const listingHash = (query, tags = []) =>
-  `#/expression/${encodeURIComponent(query)}${tags.length ? `?tags=${encodeURIComponent(tags.join('|'))}` : ''}`;
+// A dataset filter is { tags: [...], assay: '' }: datasets carrying any of the tags, of that assay.
+const NO_FILTER = { tags: [], assay: '' };
+const isFiltered = (f) => f.tags.length > 0 || Boolean(f.assay);
+function filterQs(f = NO_FILTER, sep = '?') {
+  const parts = [];
+  if (f.tags && f.tags.length) parts.push(`tags=${encodeURIComponent(f.tags.join('|'))}`);
+  if (f.assay) parts.push(`assay=${encodeURIComponent(f.assay)}`);
+  return parts.length ? sep + parts.join('&') : '';
+}
+const searchHash = (query, f) => `#/search/${encodeURIComponent(query)}${filterQs(f)}`;
+const listingHash = (query, f) => `#/expression/${encodeURIComponent(query)}${filterQs(f)}`;
+// "RNA-seq datasets tagged <b>stress</b> or <b>heat shock</b>"
+const filterText = (f) => `${f.assay ? `<b>${esc(f.assay)}</b> ` : ''}datasets${f.tags.length ?
+  ` tagged ${f.tags.map((t) => `<b>${esc(t)}</b>`).join(' or ')}` : ''}`;
+const resultFilter = (r) => ({ tags: r.tags || [], assay: r.assay || '' });
+
+let assayCache = null;
+async function allAssays() {
+  if (!assayCache) assayCache = await api('/api/assays');
+  return assayCache;
+}
+
+// <select> of assays with dataset counts ('' = all); empty when fewer than two assays are recorded.
+function assaySelect(id, assays, current) {
+  if (assays.length < 2 && !current) return '';
+  return `<select id="${id}" aria-label="Assay"><option value="">All assays</option>${assays.map((a) =>
+    `<option value="${esc(a.assay)}" ${a.assay === current ? 'selected' : ''}>${esc(a.assay)} (${a.count})</option>`)
+    .join('')}</select>`;
+}
 
 let tagCache = null;
 async function allTags() {
@@ -177,23 +203,33 @@ function tagPicker(container, byCount, selected, onChange) {
   }));
 }
 
-// "Restrict to datasets with these tags" panel; hashFor(tags) gives the page to open for a tag selection.
-function tagFilterHtml(what, tags) {
+// "Restrict to an assay or to datasets with these tags" panel; hashFor(filter) gives the page to open.
+function tagFilterHtml(what, f) {
+  const chosen = [f.assay, f.tags.length ? `${f.tags.length} tag${f.tags.length > 1 ? 's' : ''}` : '']
+    .filter(Boolean).join(', ');
   return `<details class="tagfilter">
-      <summary>Restrict the ${what} to datasets with these tags${tags && tags.length ?
-        ` (${tags.length} selected)` : ''}</summary>
+      <summary>Restrict the ${what} to an assay or to datasets with these tags${chosen ? ` (${esc(chosen)})` : ''}
+      </summary>
+      <div id="assay-panel" class="assay-pick"></div>
       <div id="tag-panel" class="tag-picker"><p class="loading">Loading tags…</p></div>
-      <div class="tag-actions"><button type="button" id="tags-apply">Apply selected tags</button>
+      <div class="tag-actions"><button type="button" id="tags-apply">Apply</button>
         <button type="button" id="tags-clear" class="secondary">Clear</button></div>
     </details>`;
 }
 
-function tagFilter(tags, hashFor) {
-  const picked = new Set(tags || []);
+function tagFilter(f, hashFor) {
+  const picked = new Set(f.tags);
   allTags().then((all) => tagPicker(document.getElementById('tag-panel'), all, picked, () => {}))
     .catch((err) => { document.getElementById('tag-panel').innerHTML = `<p class="notice">${esc(err.message)}</p>`; });
-  document.getElementById('tags-apply').addEventListener('click', () => { location.hash = hashFor([...picked]); });
-  document.getElementById('tags-clear').addEventListener('click', () => { location.hash = hashFor([]); });
+  allAssays().then((assays) => {
+    const html = assaySelect('assay-select', assays, f.assay);
+    if (html) document.getElementById('assay-panel').innerHTML = `<label>Assay ${html}</label>`;
+  }).catch(() => {});
+  const assay = () => (document.getElementById('assay-select') || { value: f.assay }).value;
+  document.getElementById('tags-apply').addEventListener('click', () => {
+    location.hash = hashFor({ tags: [...picked], assay: assay() });
+  });
+  document.getElementById('tags-clear').addEventListener('click', () => { location.hash = hashFor(NO_FILTER); });
 }
 
 function showHome() {
@@ -212,18 +248,19 @@ function showHome() {
       from the original SPELL site.</p>`;
 }
 
-async function showSearch(query, tags = []) {
+async function showSearch(query, filter = NO_FILTER) {
   document.getElementById('search-input').value = query;
   app.innerHTML = `<p class="loading">Searching for ${esc(query)}…</p>`;
   let result;
   try {
     const names = query.split(/[\s,;]+/).filter(Boolean);
     const lookup = await api(`/api/genes/lookup?q=${encodeURIComponent(names.join(' '))}`);
-    if (tags.length) {
+    if (isFiltered(filter)) {
       result = await api('/api/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ genes: names, limit: 100, datasets: 100, tags }),
+        body: JSON.stringify({ genes: names, limit: 100, datasets: 100, tags: filter.tags,
+          assay: filter.assay || null }),
       });
     } else if (lookup.genes.length === 1) {
       result = await api(`/api/genes/${lookup.genes[0].id}/coexpression?limit=100&datasets=100`);
@@ -237,7 +274,8 @@ async function showSearch(query, tags = []) {
       });
     }
   } catch (err) {
-    app.innerHTML = `<p class="notice">${esc(err.message)}</p>`;
+    app.innerHTML = `<p class="notice">${esc(err.message)}${isFiltered(filter) ?
+      `. <a href="${searchHash(query)}">Search all datasets</a>` : ''}</p>`;
     return;
   }
   renderResults(result, query);
@@ -262,12 +300,11 @@ function renderResults(r, query) {
     ${notices.map((n) => `<p class="notice">${n}</p>`).join('')}
     <p class="sub">${r.source === 'live' ? 'Live search' : 'Precomputed result'} ·
       top ${r.genes.length} genes · ${r.datasets.length} most informative datasets shown</p>
-    ${r.tags && r.tags.length ? `<p class="notice">Searched only the ${r.datasets_searched} datasets tagged
-      ${r.tags.map((t) => `<b>${esc(t)}</b>`).join(' or ')}.
-      <a href="${searchHash(query)}">Search all datasets</a></p>` : ''}
-    <p class="sub"><a href="${listingHash(query, r.tags || [])}">Show the expression of the query genes only</a>
+    ${isFiltered(resultFilter(r)) ? `<p class="notice">Searched only the ${r.datasets_searched}
+      ${filterText(resultFilter(r))}. <a href="${searchHash(query)}">Search all datasets</a></p>` : ''}
+    <p class="sub"><a href="${listingHash(query, resultFilter(r))}">Show the expression of the query genes only</a>
       (no co-expression search)</p>
-    ${tagFilterHtml('search', r.tags)}
+    ${tagFilterHtml('search', resultFilter(r))}
     <h2>Expression in the most informative datasets</h2>
     <div id="heatmaps"></div>
     <div class="grid">
@@ -312,6 +349,7 @@ function renderResults(r, query) {
     { headerName: 'GEO', field: 'geo_id', hide: true },
     { headerName: 'PubMed', field: 'pubmed_id', hide: true },
     { headerName: 'Conditions', field: 'num_conds', hide: true },
+    { headerName: 'Assay', field: 'assay', hide: true },
     { headerName: 'Species', field: 'species', width: 170, hide: !multiSpecies() },
     { headerName: 'Dataset', field: 'title', flex: 1, minWidth: 240, cellRenderer: (c) => cell(
       `<div class="clamp1"><a href="#/dataset/${c.data.id}" title="${esc(c.value)}">${esc(c.value)}</a></div>
@@ -320,7 +358,7 @@ function renderResults(r, query) {
       cellRenderer: (c) => bar(`${c.value.toFixed(1)}%`, c.value / maxWeight) },
   ], r.datasets.map((d, i) => ({ ...d, rank: i + 1 })));
   csvButton(document.getElementById('datasets-grid').parentElement, datasetsGrid, `spell-next_${slug}_datasets.csv`,
-    ['rank', 'id', 'title', 'first_author', 'year', 'geo_id', 'pubmed_id', 'num_conds', 'species', 'weight']);
+    ['rank', 'id', 'title', 'first_author', 'year', 'geo_id', 'pubmed_id', 'num_conds', 'assay', 'species', 'weight']);
 
   const hitIds = r.genes.slice(0, GO_GENES).map((g) => g.id);
   document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => {
@@ -329,7 +367,7 @@ function renderResults(r, query) {
   }));
   showEnrichment(hitIds, 'P', r.query);
 
-  tagFilter(r.tags, (tags) => searchHash(query, tags));
+  tagFilter(resultFilter(r), (f) => searchHash(query, f));
 
   const genes = [...r.query, ...r.genes.slice(0, HEATMAP_GENES)];
   heatmapPager(document.getElementById('heatmaps'), r.datasets, genes, r.query.length);
@@ -596,15 +634,16 @@ function colour(t) {
 const rampCss = () => `linear-gradient(90deg, ${colour(-1)}, ${colour(0)}, ${colour(1)})`;
 
 // Listing mode: the query genes' expression in every dataset that measures them (SPELL's "Show Expression Levels").
-async function showListing(query, tags) {
+async function showListing(query, filter = NO_FILTER) {
   document.getElementById('search-input').value = query;
   app.innerHTML = `<p class="loading">Loading expression of ${esc(query)}…</p>`;
   let r;
   try {
-    const qs = `genes=${encodeURIComponent(query)}${tags.length ? `&tags=${encodeURIComponent(tags.join('|'))}` : ''}`;
+    const qs = `genes=${encodeURIComponent(query)}${filterQs(filter, '&')}`;
     r = await api(`/api/expression-listing?${qs}`);
   } catch (err) {
-    app.innerHTML = `<p class="notice">${esc(err.message)}</p>`;
+    app.innerHTML = `<p class="notice">${esc(err.message)}${isFiltered(filter) ?
+      `. <a href="${listingHash(query)}">List all datasets</a>` : ''}</p>`;
     return;
   }
   const n = r.query.length;
@@ -613,11 +652,11 @@ async function showListing(query, tags) {
     <div class="chips">${r.query.map((g) => `<span class="chip" title="${esc(g.description)}">
       ${esc(label(g))}</span>`).join('')}</div>
     ${r.unknown.length ? `<p class="notice">Not found: ${r.unknown.map(esc).join(', ')}</p>` : ''}
-    <p class="sub">${r.datasets.length} datasets measure ${n > 1 ? 'these genes' : 'this gene'}${tags.length ?
-      ` among those tagged ${tags.map(esc).join(' or ')}` : ''}. Datasets measuring the most query genes come
+    <p class="sub">${r.datasets.length} datasets measure ${n > 1 ? 'these genes' : 'this gene'}${isFiltered(filter) ?
+      ` among the ${filterText(filter)}` : ''}. Datasets measuring the most query genes come
       first, then those where the genes vary most. No co-expression search is run;
-      <a href="${searchHash(query, tags)}">search for co-expressed genes</a>.</p>
-    ${tagFilterHtml('listing', tags)}
+      <a href="${searchHash(query, filter)}">search for co-expressed genes</a>.</p>
+    ${tagFilterHtml('listing', filter)}
     <h2>Expression</h2>
     <div id="heatmaps"></div>
     <section><h2>Datasets</h2><div id="listing-grid"></div></section>`;
@@ -636,7 +675,7 @@ async function showListing(query, tags) {
   csvButton(document.getElementById('listing-grid').parentElement, listingGrid,
     `spell-next_${fileSlug(r.query)}_listing.csv`, ['id', 'title', 'geo_id', 'genes_measured', 'num_conds', 'variance']);
   heatmapPager(document.getElementById('heatmaps'), r.datasets, r.query, n);
-  tagFilter(tags, (t) => listingHash(query, t));
+  tagFilter(filter, (f) => listingHash(query, f));
 }
 
 async function showHelp() {
@@ -667,10 +706,12 @@ async function showHelp() {
         Bonferroni-corrected p and false discovery rate). Terms whose genes from the list are identical to a
         higher-ranked term are listed under it as "also".</li>
     </ul>
-    <h2>Restricting by dataset tags</h2>
-    <p>Datasets are tagged by topic (for example stress, heat shock, carbon utilization). On a results page open
-      <i>Restrict the search to datasets with these tags</i>, or pick tags on the
-      <a href="#/datasets">Datasets</a> page and search there. A dataset is used if it carries any selected tag.
+    <h2>Restricting by assay or dataset tags</h2>
+    <p>Each dataset records its assay (microarray or RNA-seq) and is tagged by topic (for example stress, heat
+      shock, carbon utilization). On a results page open
+      <i>Restrict the search to an assay or to datasets with these tags</i>, or choose an assay and tags on the
+      <a href="#/datasets">Datasets</a> page and search there. A dataset is used if it is of the chosen assay
+      and carries any selected tag.
       Unlike the original SPELL, which searched every dataset and only hid the others from the list, the search
       itself is limited to the tagged datasets, so the gene ranking reflects only them.</p>
     <h2>Expression without a search</h2>
@@ -743,23 +784,26 @@ async function showAbout() {
   </article>`;
 }
 
-async function showDatasets(initialTags) {
+async function showDatasets(filter = NO_FILTER) {
   app.innerHTML = '<p class="loading">Loading datasets…</p>';
-  let datasets, tags;
+  let datasets, tags, assays;
   try {
-    [datasets, tags] = await Promise.all([api('/api/datasets'), allTags()]);
+    [datasets, tags, assays] = await Promise.all([api('/api/datasets'), allTags(), allAssays()]);
   } catch (err) {
     app.innerHTML = `<p class="notice">${esc(err.message)}</p>`;
     return;
   }
-  const selected = new Set(initialTags);
+  const selected = new Set(filter.tags);
   const speciesFilter = () => (document.getElementById('ds-species') || { value: '' }).value;
+  const assayFilter = () => (document.getElementById('ds-assay') || { value: '' }).value;
+  const current = () => ({ tags: [...selected], assay: assayFilter() });
   app.innerHTML = `
     <h1>Datasets</h1>
     <p class="sub">${datasets.length} expression datasets. Pick tags to list matching datasets (a dataset
       matches if it carries any selected tag), then search genes within them.</p>
     <div class="tag-picker" id="ds-tags"></div>
     <div class="ds-tools">
+      ${assaySelect('ds-assay', assays, filter.assay)}
       ${multiSpecies() ? `<select id="ds-species" aria-label="Species"><option value="">All species</option>${
         CONFIG.species.map((sp) => `<option>${esc(sp)}</option>`).join('')}</select>` : ''}
       <input type="search" id="ds-filter" placeholder="Filter by title, author, GEO ID…" aria-label="Filter datasets">
@@ -783,6 +827,8 @@ async function showDatasets(initialTags) {
       { headerName: 'Year', field: 'year', width: 90, type: 'numericColumn' },
       { headerName: 'Conditions', field: 'num_conds', width: 120, type: 'numericColumn' },
       { headerName: 'Genes', field: 'num_genes', width: 100, type: 'numericColumn' },
+      { headerName: 'Assay', field: 'assay', width: 150, cellRenderer: (c) => cell(`${esc(c.value || '—')}${
+        c.data.value_type ? `<br><span class="sub">${esc(c.data.value_type)}</span>` : ''}`) },
       { headerName: 'Tags', field: 'tags', flex: 1, minWidth: 180, sortable: false,
         valueFormatter: (c) => c.value.join(', '),
         cellRenderer: (c) => cell(`<div class="clamp">${c.value.map(esc).join(', ') || '—'}</div>`) },
@@ -798,28 +844,31 @@ async function showDatasets(initialTags) {
     rowHeight: 60,
     suppressCellFocus: true,
     enableCellTextSelection: true,
-    isExternalFilterPresent: () => selected.size > 0 || speciesFilter() !== '',
+    isExternalFilterPresent: () => selected.size > 0 || speciesFilter() !== '' || assayFilter() !== '',
     doesExternalFilterPass: (node) => (selected.size === 0 || node.data.tags.some((t) => selected.has(t)))
-      && (speciesFilter() === '' || node.data.species === speciesFilter()),
+      && (speciesFilter() === '' || node.data.species === speciesFilter())
+      && (assayFilter() === '' || node.data.assay === assayFilter()),
     onModelUpdated: (e) => {
       document.getElementById('ds-count').textContent =
         `${e.api.getDisplayedRowCount()} of ${datasets.length} datasets shown`;
     },
   });
-  tagPicker(document.getElementById('ds-tags'), tags, selected, () => {
+  const filterChanged = () => {
     grid.onFilterChanged();
-    history.replaceState(null, '', selected.size ? `#/datasets?tags=${encodeURIComponent([...selected].join('|'))}`
-      : '#/datasets');
-  });
+    history.replaceState(null, '', `#/datasets${filterQs(current())}`);
+  };
+  tagPicker(document.getElementById('ds-tags'), tags, selected, filterChanged);
   const speciesBox = document.getElementById('ds-species');
   if (speciesBox) speciesBox.addEventListener('change', () => grid.onFilterChanged());
+  const assayBox = document.getElementById('ds-assay');
+  if (assayBox) assayBox.addEventListener('change', filterChanged);
   document.getElementById('ds-filter').addEventListener('input', (e) => {
     grid.setGridOption('quickFilterText', e.target.value);
   });
   document.getElementById('ds-search').addEventListener('submit', (e) => {
     e.preventDefault();
     const q = document.getElementById('ds-genes').value.trim();
-    if (q) location.hash = searchHash(q, [...selected]);
+    if (q) location.hash = searchHash(q, current());
   });
 }
 
@@ -848,6 +897,9 @@ async function showDataset(id) {
       <dt>Links</dt><dd>${links || '—'}</dd>
       <dt>Conditions</dt><dd>${d.num_conds}</dd>
       <dt>Genes measured</dt><dd>${d.num_genes}</dd>
+      <dt>Assay</dt><dd>${d.assay ? `<a href="#/datasets?assay=${encodeURIComponent(d.assay)}">${esc(d.assay)}</a>`
+        : '—'}</dd>
+      ${d.value_type ? `<dt>Values</dt><dd>${esc(d.value_type)}</dd>` : ''}
       <dt>Tags</dt><dd>${(d.tags || '').split('|').filter(Boolean).map((t) =>
         `<a href="#/datasets?tags=${encodeURIComponent(t)}">${esc(t)}</a>`).join(', ') || '—'}</dd>
       <dt>File</dt><dd>${esc(d.filename)}</dd>

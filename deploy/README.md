@@ -66,12 +66,15 @@ All of a MOD's inputs live under `/srv/spell/<mod>/raw/` (SGD shown; use `wb` fo
 3. **Add its metadata** to `raw/meta/datasets.tsv`, one tab-separated row:
 
    ```
-   filename  geo_id  pubmed_id  title  description  first_author  authors  journal  year  tags
+   filename  geo_id  pubmed_id  title  description  first_author  authors  journal  year  tags  assay  value_type
    ```
 
    `filename` must match `dataset_list.txt`. `tags` are `|`-separated (e.g.
-   `stress|heat shock`); reuse existing tag names so the datasets page filter groups them.
-   A row without a `title` counts as no metadata (validate warns).
+   `stress|heat shock`) and describe the biology; reuse existing tag names so the datasets
+   page filter groups them. `assay` is `microarray` or `RNA-seq` (not a tag). For RNA-seq,
+   supply log2(TMM CPM + 1) or log2(TPM + 1) values and say which in `value_type` (e.g.
+   `log2 TMM CPM`, `log2 TPM`, `vst`, `log2 ratio`); validate warns about raw counts or
+   other unlogged values. A row without a `title` counts as no metadata (validate warns).
 
 4. **Validate** (changes nothing): `./spellctl validate sgd`. It checks the PCL format,
    unknown genes, duplicate IDs and missing metadata; fix errors before continuing.

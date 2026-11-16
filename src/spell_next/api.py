@@ -45,6 +45,7 @@ async def lifespan(app):
     state['live'] = threading.BoundedSemaphore(MAX_LIVE_SEARCHES)
     state['go'] = load_go_index()
     state['config'] = load_config()
+    state['assay_cols'] = assay_columns()
     state['log'] = SearchLog(LOG_DIR or None)
     yield
     state.clear()
@@ -71,7 +72,8 @@ def dataset_info(con, ids):
     if not ids:
         return {}
     rows = con.execute('SELECT id, geo_id, pubmed_id, title, first_author, year, tags, num_conds, num_genes, '
-                       'species FROM datasets WHERE id IN (%s)' % ','.join('?' * len(ids)), list(ids))
+                       'species, %s FROM datasets WHERE id IN (%s)'
+                       % (state['assay_cols'], ','.join('?' * len(ids))), list(ids))
     return {r['id']: dict(r) for r in rows}
 
 
@@ -108,6 +110,13 @@ def load_go_index():
     return index
 
 
+def assay_columns():
+    """SQL for the assay columns (NULL for builds made before datasets had them)."""
+    with db() as con:
+        cols = {r['name'] for r in con.execute('PRAGMA table_info(datasets)')}
+    return 'assay, value_type' if 'assay' in cols else 'NULL AS assay, NULL AS value_type'
+
+
 def load_config():
     """The MOD config stored in the build, plus the species present (SGD defaults for older builds)."""
     with db() as con:
@@ -115,6 +124,7 @@ def load_config():
         species = [r[0] for r in con.execute(
             'SELECT species FROM datasets WHERE species IS NOT NULL GROUP BY species ORDER BY COUNT(*) DESC')]
     cfg = json.loads(row[0]) if row else modconfig.public(modconfig.DEFAULTS)
+    cfg.setdefault('assays', modconfig.DEFAULTS['datasets']['assays'])
     return {**cfg, 'species': species}
 
 
@@ -162,29 +172,39 @@ class SearchRequest(BaseModel):
     datasets: int = Field(100, ge=1, le=100)
     tags: list[str] = Field(default_factory=list, max_length=50,
                             description='search only datasets carrying any of these tags')
+    assay: str | None = Field(None, max_length=50, description='search only datasets of this assay')
 
 
 def split_tags(value):
     return [t for t in (value or '').split('|') if t]
 
 
-def datasets_with_tags(con, tags):
+def filtered_datasets(con, tags, assay):
+    """IDs of datasets carrying any of ``tags`` and of ``assay`` (None: no restriction requested)."""
+    if not tags and not assay:
+        return None
     wanted = set(tags)
-    return [r['id'] for r in con.execute('SELECT id, tags FROM datasets') if wanted & set(split_tags(r['tags']))]
+    return [r['id'] for r in con.execute('SELECT id, tags, %s FROM datasets' % state['assay_cols'])
+            if (not wanted or wanted & set(split_tags(r['tags']))) and (not assay or r['assay'] == assay)]
+
+
+def log_filters(tags, assay):
+    return list(tags) + (['assay:' + assay] if assay else [])
 
 
 @app.post('/api/search')
 def live_search(req: SearchRequest):
     with db() as con:
         ids, unknown, ambiguous = resolve(con, req.genes)
-        dataset_ids = datasets_with_tags(con, req.tags) if req.tags else None
+        dataset_ids = filtered_datasets(con, req.tags, req.assay)
     if not ids:
         raise HTTPException(422, {'message': 'no recognised genes', 'unknown': unknown, 'ambiguous': ambiguous})
     if dataset_ids is not None and not dataset_ids:
-        raise HTTPException(422, {'message': 'no datasets carry the selected tags'})
+        raise HTTPException(422, {'message': 'no datasets match the selected tags and assay'})
     if len(ids) == 1 and dataset_ids is None:
         result = coexpression(ids[0], req.limit, req.datasets, '')
-        return {**result, 'unknown': unknown, 'ambiguous': ambiguous, 'tags': [], 'datasets_searched': None}
+        return {**result, 'unknown': unknown, 'ambiguous': ambiguous, 'tags': [], 'assay': None,
+                'datasets_searched': None}
 
     sem = state['live']
     if not sem.acquire(timeout=30):
@@ -196,7 +216,7 @@ def live_search(req: SearchRequest):
 
     hits = [(g, s) for g, s in zip(result.gene_ids, result.gene_scores) if g not in ids][:req.limit]
     names = [state['comp'].gene_names[state['comp'].index_of_id[g]] for g in ids]
-    state['log'].record('multi' if len(ids) > 1 else 'single', names, req.tags)
+    state['log'].record('multi' if len(ids) > 1 else 'single', names, log_filters(req.tags, req.assay))
     weights = result.dataset_weights
     if weights is None:                       # single-gene search: weights only order the datasets
         total = sum(result.raw_weights) or 1.0
@@ -210,7 +230,8 @@ def live_search(req: SearchRequest):
         'genes': [{**ginfo[g], 'score': s} for g, s in hits],
         'datasets': [{**dinfo[d], 'weight': w} for d, w in dsets],
         'unknown': unknown, 'ambiguous': ambiguous, 'source': 'live',
-        'tags': req.tags, 'datasets_searched': len(dataset_ids) if dataset_ids is not None else None,
+        'tags': req.tags, 'assay': req.assay,
+        'datasets_searched': len(dataset_ids) if dataset_ids is not None else None,
     }
 
 
@@ -222,13 +243,15 @@ def dataset_list():
         qc_cols = ", q.scale, q.warnings" if has_qc else ""
         qc_join = " LEFT JOIN dataset_qc q ON q.dataset_id = d.id" if has_qc else ""
         rows = con.execute('SELECT d.id, d.title, d.first_author, d.year, d.journal, d.geo_id, d.pubmed_id, '
-                           'd.num_conds, d.num_genes, d.tags, d.has_metadata, d.species' + qc_cols +
+                           'd.num_conds, d.num_genes, d.tags, d.has_metadata, d.species, ' +
+                           state['assay_cols'] + qc_cols +
                            ' FROM datasets d' + qc_join + ' ORDER BY d.year DESC, d.id DESC').fetchall()
     return [{**dict(r), 'tags': split_tags(r['tags'])} for r in rows]
 
 
 @app.get('/api/expression-listing')
-def expression_listing(genes: str = Query(..., description='gene names'), tags: str = Query('')):
+def expression_listing(genes: str = Query(..., description='gene names'), tags: str = Query(''),
+                       assay: str = Query('', description='list only datasets of this assay')):
     """Datasets measuring the query genes, most variable first, without a co-expression search."""
     names = [n for n in NAME_SEP.split(genes) if n][:MAX_QUERY_GENES]
     tag_list = split_tags(tags)
@@ -236,7 +259,8 @@ def expression_listing(genes: str = Query(..., description='gene names'), tags: 
         ids, unknown, ambiguous = resolve(con, names)
         if not ids:
             raise HTTPException(422, {'message': 'no recognised genes', 'unknown': unknown, 'ambiguous': ambiguous})
-        allowed = set(datasets_with_tags(con, tag_list)) if tag_list else None
+        allowed = filtered_datasets(con, tag_list, assay or None)
+        allowed = None if allowed is None else set(allowed)
         query = gene_info(con, ids)
     comp = state['comp']
     rows = []
@@ -253,9 +277,10 @@ def expression_listing(genes: str = Query(..., description='gene names'), tags: 
     rows.sort(key=lambda r: (-r[1], -r[2]))
     with db() as con:
         dinfo = dataset_info(con, [r[0] for r in rows])
-    state['log'].record('listing', [query[i]['systematic'] for i in ids], tag_list)
+    state['log'].record('listing', [query[i]['systematic'] for i in ids], log_filters(tag_list, assay or None))
     return {
         'query': [query[i] for i in ids], 'unknown': unknown, 'ambiguous': ambiguous, 'tags': tag_list,
+        'assay': assay or None,
         'datasets': [{**dinfo[d], 'genes_measured': n, 'variance': v} for d, n, v in rows],
     }
 
@@ -304,6 +329,15 @@ def info():
             'versions': versions,
             'max_query_genes': MAX_QUERY_GENES,
         }
+
+
+@app.get('/api/assays')
+def assay_list():
+    """Assays with the number of datasets of each (datasets with no assay recorded are not counted)."""
+    with db() as con:
+        rows = con.execute('SELECT assay, COUNT(*) AS n FROM (SELECT %s FROM datasets) WHERE assay IS NOT NULL '
+                           'GROUP BY assay ORDER BY n DESC, assay' % state['assay_cols']).fetchall()
+    return [{'assay': r['assay'], 'count': r['n']} for r in rows]
 
 
 @app.get('/api/tags')

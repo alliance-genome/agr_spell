@@ -62,7 +62,9 @@ CREATE TABLE datasets (
     num_conds INTEGER,
     num_genes INTEGER,
     has_metadata INTEGER NOT NULL,
-    species TEXT                    -- species of most of the dataset's genes
+    species TEXT,                   -- species of most of the dataset's genes
+    assay TEXT,                     -- e.g. microarray | RNA-seq (datasets.assays in mod.toml)
+    value_type TEXT                 -- what the values are, e.g. log2 TMM CPM, log2 TPM, log2 ratio
 );
 CREATE TABLE dataset_qc (
     dataset_id INTEGER PRIMARY KEY REFERENCES datasets(id),
@@ -165,7 +167,8 @@ def read_dataset_table(path):
     """Dataset metadata from a tab-separated table with a header row: {filename: dict}.
 
     Columns (only ``filename`` is required): filename, geo_id, pubmed_id, title,
-    description, first_author, authors, journal, year, tags ('|'-separated).
+    description, first_author, authors, journal, year, tags ('|'-separated), assay,
+    value_type.
     """
     out = {}
     with open(path, newline='', errors='replace') as fh:
@@ -181,6 +184,7 @@ def read_dataset_table(path):
                 'geo_id': get('geo_id'), 'title': get('title'), 'description': get('description'),
                 'first_author': get('first_author'), 'authors': get('authors'),
                 'journal': get('journal'), 'tags': get('tags'),
+                'assay': get('assay'), 'value_type': get('value_type'),
             }
     return out
 
@@ -225,12 +229,13 @@ def write_metadata(db, comp, genes, datasets, default_species=None):
         geo = (meta and meta.get('geo_id')) or (re.match(r'(GSE\d+)', ds.filename) or [None, None])[1]
         counts = Counter(species_of[comp.gene_ids[i]] for i in ds.gene_index)
         species = counts.most_common(1)[0][0] if counts else default_species
-        db.execute('INSERT INTO datasets VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (
+        db.execute('INSERT INTO datasets VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (
             ds.id, ds.filename, geo, meta and meta['pubmed_id'],
             (meta and meta['title']) or geo or ds.filename,
             meta and meta['description'], meta and meta['first_author'], meta and meta['authors'],
             meta and meta['journal'], meta and meta['year'], meta and meta['tags'],
-            ds.num_conds, len(ds.gene_index), int(bool(meta and meta.get('title'))), species))
+            ds.num_conds, len(ds.gene_index), int(bool(meta and meta.get('title'))), species,
+            meta and meta.get('assay'), meta and meta.get('value_type')))
 
 
 def _qc_one(values, centre=False):

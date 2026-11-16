@@ -53,6 +53,7 @@ DEFAULTS = {
     'datasets': {
         'metadata': None,               # None: the newest meta/SQLdump* file, if any
         'format': 'spell_dump',
+        'assays': ['microarray', 'RNA-seq'],   # allowed values of the dataset table's assay column
     },
     'go': {
         'obo': 'meta/go-basic.obo',
@@ -109,6 +110,9 @@ def validate(cfg):
         raise ConfigError('links.gene may only use {%s}: %s' % ('}, {'.join(LINK_FIELDS), err))
     if not isinstance(cfg['mod']['examples'], list):
         raise ConfigError('mod.examples must be a list of queries')
+    assays = cfg['datasets']['assays']
+    if not isinstance(assays, list) or not all(isinstance(a, str) and a for a in assays):
+        raise ConfigError('datasets.assays must be a list of assay names')
     for rel, url in cfg['updates'].items():
         if os.path.isabs(rel) or '..' in rel.replace('\\', '/').split('/'):
             raise ConfigError('updates: %r must be a path inside the raw directory' % rel)
@@ -123,4 +127,4 @@ def path(raw_dir, relative):
 
 def public(cfg):
     """The part of the config the web app needs (no file paths)."""
-    return {'mod': cfg['mod'], 'links': cfg['links']}
+    return {'mod': cfg['mod'], 'links': cfg['links'], 'assays': cfg['datasets']['assays']}

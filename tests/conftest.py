@@ -58,7 +58,10 @@ def gaf_line(mod_id, term):
 
 
 def make_toy_raw(raw, n_datasets_per_species=2, seed=7):
-    """Write a two-species MOD (gene table, dataset table, PCLs, GO files, mod.toml) into raw."""
+    """Write a two-species MOD (gene table, dataset table, PCLs, GO files, mod.toml) into raw.
+
+    Each species has an RNA-seq dataset (set0, tagged stress) and a microarray one (set1, tagged growth).
+    """
     (raw / 'expression').mkdir(parents=True, exist_ok=True)
     (raw / 'meta').mkdir(parents=True, exist_ok=True)
     (raw / 'mod.toml').write_text(CONFIG)
@@ -77,7 +80,7 @@ def make_toy_raw(raw, n_datasets_per_species=2, seed=7):
 
     # Two datasets per species; genes 1-4 of each species rise and fall together.
     rng = np.random.default_rng(seed)
-    ds_rows, ds_list = ['filename\tgeo_id\ttitle\tfirst_author\tyear\ttags'], []
+    ds_rows, ds_list = ['filename\tgeo_id\ttitle\tfirst_author\tyear\ttags\tassay\tvalue_type'], []
     ds_id = 1
     for sp in SPECIES:
         for k in range(n_datasets_per_species):
@@ -91,8 +94,9 @@ def make_toy_raw(raw, n_datasets_per_species=2, seed=7):
             (raw / 'expression' / name).write_text('\n'.join(lines) + '\n')
             (raw / 'expression' / (name + '.sinfo')).write_text('All\t0\t1\n')
             ds_list.append('%d\t%s' % (ds_id, name))
-            ds_rows.append('%s\tGSE%d\t%s study %d\tAuthor %s\t2020\t%s' % (
-                name, 9000 + ds_id, SPECIES[sp], k, sp, 'stress' if k == 0 else 'growth'))
+            ds_rows.append('%s\tGSE%d\t%s study %d\tAuthor %s\t2020\t%s\t%s' % (
+                name, 9000 + ds_id, SPECIES[sp], k, sp, 'stress' if k == 0 else 'growth',
+                'RNA-seq\tlog2 TPM' if k == 0 else 'microarray\t'))
             ds_id += 1
     (raw / 'dataset_list.txt').write_text('\n'.join(ds_list) + '\n')
     (raw / 'meta' / 'datasets.tsv').write_text('\n'.join(ds_rows) + '\n')

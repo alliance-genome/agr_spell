@@ -2,11 +2,14 @@
 
 Errors stop a rebuild (missing or unreadable files, duplicate IDs, datasets with no
 recognised genes); warnings are reported but do not (few conditions, low gene-name
-match, odd value scale, missing metadata).
+match, odd value scale, missing metadata, unknown assay, RNA-seq values that are not
+log-scale).
 """
 import os
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
+
+import numpy as np
 
 from spell_next import modconfig, qc
 from spell_next.compendium import read_dataset_list, read_gene_list, read_pcl, tokenize
@@ -14,6 +17,7 @@ from spell_next.compendium import read_dataset_list, read_gene_list, read_pcl, t
 MIN_CONDITIONS = 5
 MIN_MATCH = 0.5            # warn when fewer than half of a file's rows match known genes
 MAX_MISSING = 0.5
+COUNT_LIKE = 0.95          # RNA-seq values this often whole numbers (and unlogged) look like raw read counts
 
 
 @dataclass
@@ -84,8 +88,10 @@ def check_pcl(path, name_to_index):
         return out
     scale = qc.classify_scale(diag)
     rescaled, actions, warnings = qc.normalize(values)
+    present = values[~np.isnan(values)]
     out.update(scale=scale, frac_missing=diag['frac_missing'],
-               cond_median_spread=qc.diagnose(rescaled).get('cond_median_spread'))
+               cond_median_spread=qc.diagnose(rescaled).get('cond_median_spread'),
+               frac_integer=float(np.mean(present == np.round(present))))
     if diag['frac_missing'] > MAX_MISSING:
         out['issues'].append(('warning', '%.0f%% of values missing' % (100 * diag['frac_missing'])))
     for a in actions:
@@ -151,6 +157,38 @@ def validate(raw_dir, workers=None):
     return report
 
 
+def _check_assays(report, cfg, meta, filenames):
+    """Warn about unknown assays and RNA-seq files that are not on a log scale."""
+    where = cfg['datasets']['metadata'] or 'datasets'
+    allowed = cfg['datasets']['assays']
+    unknown = sorted({m['assay'] for f in filenames if (m := meta.get(f)) and m.get('assay')} - set(allowed))
+    for a in unknown:
+        names = [f for f in filenames if (meta.get(f) or {}).get('assay') == a]
+        report.add('warning', where, 'assay %r is not one of %s (%d datasets: %s%s)'
+                   % (a, ', '.join(allowed), len(names), ', '.join(names[:3]), ' …' if len(names) > 3 else ''))
+    stats = {d['filename']: d for d in report.datasets}
+    no_type = []
+    for f in filenames:
+        m = meta.get(f) or {}
+        if m.get('assay') != 'RNA-seq':
+            continue
+        if not m.get('value_type'):
+            no_type.append(f)
+        d = stats.get(f, {})
+        if d.get('scale') != 'intensity':
+            continue
+        if d.get('frac_integer', 0) >= COUNT_LIKE:
+            report.add('warning', f, 'RNA-seq values look like raw read counts; supply log2(TMM CPM + 1) '
+                       'or log2(TPM + 1) instead (the build would only take log2(x + 1), with no '
+                       'library-size normalisation)')
+        else:
+            report.add('warning', f, 'RNA-seq values are not log-scale (TPM, FPKM or CPM?); supply log2(TPM + 1) '
+                       'or log2(TMM CPM + 1) (the build would take log2(x + 1) as supplied)')
+    if no_type:
+        report.add('warning', where, '%d RNA-seq datasets have no value_type (e.g. log2 TMM CPM, log2 TPM): %s%s'
+                   % (len(no_type), ', '.join(no_type[:3]), ' …' if len(no_type) > 3 else ''))
+
+
 def _check_metadata(report, raw_dir, cfg, gene_names, filenames):
     from spell_next.build import read_dataset_info, read_gene_info   # avoids a circular import
 
@@ -168,6 +206,7 @@ def _check_metadata(report, raw_dir, cfg, gene_names, filenames):
         report.add('warning', cfg['datasets']['metadata'] or 'datasets',
                    '%d datasets have no metadata title (shown by file name): %s%s'
                    % (len(missing), ', '.join(missing[:5]), ' …' if len(missing) > 5 else ''))
+    _check_assays(report, cfg, meta, filenames)
     extra = sorted(set(meta) - set(filenames))
     if extra:
         report.add('warning', cfg['datasets']['metadata'] or 'datasets',

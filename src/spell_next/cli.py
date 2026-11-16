@@ -273,7 +273,7 @@ def cmd_migrate_metadata(args):
     meta = read_dataset_info(p['raw'], cfg)
     out_rel = 'meta/datasets.tsv'
     cols = ['filename', 'geo_id', 'pubmed_id', 'title', 'description', 'first_author', 'authors', 'journal',
-            'year', 'tags']
+            'year', 'tags', 'assay', 'value_type']
     rows = 0
     with open(os.path.join(p['raw'], out_rel), 'w') as out:
         out.write('\t'.join(cols) + '\n')
