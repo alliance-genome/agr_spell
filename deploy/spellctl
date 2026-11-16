@@ -5,6 +5,8 @@
 #   ./spellctl rebuild MOD [--wait]  validate, build, switch to the new build, restart MOD's app.
 #                                    Runs in the background (safe to log out); --wait stays attached.
 #   ./spellctl rebuild-log MOD       follow the running (or show the last) rebuild's log
+#   ./spellctl update MOD            fetch gene names and GO files ([updates] in mod.toml); rebuild if any
+#                                    changed. Runs in the foreground (cron runs it weekly; see README).
 #   ./spellctl rollback MOD [BUILD]  serve the previous (or given) build, restart
 #   ./spellctl status MOD            live build, build history, rebuild in progress
 #   ./spellctl start|stop|restart MOD
@@ -22,7 +24,7 @@ BUILD_CPUS=${SPELL_BUILD_CPUS:-3}          # leave a core for the running apps d
 BUILD_MEM=${SPELL_BUILD_MEM:-10g}
 COMPOSE=(docker compose --profile wb)
 
-usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,17p' "$SELF" | sed 's/^# \{0,1\}//'; exit 1; }
 
 service_of() {
   case "$1" in
@@ -92,6 +94,21 @@ case "$cmd" in
     fi ;;
   _rebuild)
     do_rebuild "${1:?MOD}" ;;
+  update)
+    mod=${1:?MOD}; service_of "$mod" >/dev/null
+    echo "spellctl: reference update of $mod started $(date '+%Y-%m-%d %H:%M:%S')"
+    if pid=$(rebuild_running "$mod"); then
+      echo "spellctl: a rebuild of $mod is running (pid $pid); skipping this update"; exit 0
+    fi
+    rc=0; spell_run "$mod" update-refs /srv/spell || rc=$?
+    case $rc in
+      0) do_rebuild "$mod" > "$(rebuild_log "$mod")" 2>&1 & echo $! > "$(rebuild_pid "$mod")"
+         wait "$!" && rc=0 || rc=$?
+         tail -n 3 "$(rebuild_log "$mod")"
+         exit $rc ;;
+      3) echo "spellctl: nothing changed; no rebuild needed" ;;
+      *) echo "spellctl: reference update of $mod FAILED; the live build is unchanged"; exit 1 ;;
+    esac ;;
   rebuild-log)
     mod=${1:?MOD}; log=$(rebuild_log "$mod")
     [ -f "$log" ] || { echo "No rebuild log yet for $mod."; exit 0; }
@@ -109,6 +126,10 @@ case "$cmd" in
       echo; echo "Rebuild in progress (pid $pid); latest: $(grep -E '^(spellctl|mod|compendium|qc|precomputing|  [0-9]+/)' "$log" | tail -1)"
     elif [ -f "$log" ]; then
       echo; echo "Last rebuild: $(grep '^spellctl: rebuild' "$log" | tail -1)"
+    fi
+    ulog="$DATA_ROOT/$mod/update.log"
+    if [ -f "$ulog" ]; then
+      echo "Last reference update: $(grep '^spellctl: ' "$ulog" | tail -2 | tr '\n' ' ')"
     fi ;;
   migrate-metadata)
     spell_run "${1:?MOD}" migrate-metadata /srv/spell ;;

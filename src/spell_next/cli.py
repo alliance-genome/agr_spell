@@ -8,7 +8,8 @@ ROOT is the instance directory (or set SPELL_ROOT):
     ROOT/logs/      monthly search logs (kept across builds)
 
 Typical use: add PCL files to raw/expression/, list them in raw/dataset_list.txt and
-raw/meta/datasets.tsv, then `spell validate ROOT` and `spell rebuild ROOT`.
+raw/meta/datasets.tsv, then `spell validate ROOT` and `spell rebuild ROOT`. Gene names
+and GO files listed under [updates] in mod.toml are refreshed by `spell update-refs ROOT`.
 """
 import argparse
 import os
@@ -296,6 +297,27 @@ def cmd_migrate_metadata(args):
     return 0
 
 
+def cmd_update_refs(args):
+    """Fetch the reference files listed under [updates]; exit 0 if any changed, 3 if none did, 1 on failure."""
+    from spell_next import refs
+
+    p = paths(args.root)
+    cfg = modconfig.load(p['raw'])
+    if not cfg['updates']:
+        print('No [updates] section in raw/mod.toml: nothing to fetch.')
+        return 3
+    print('Fetching %d reference file(s):' % len(cfg['updates']))
+    changed, failed = refs.update(p['raw'], cfg['updates'])
+    if failed:
+        print('%d download(s) failed; those files were left as they were.' % len(failed))
+        return 1
+    if not changed:
+        print('All reference files are current.')
+        return 3
+    print('%d file(s) updated; rebuild to use them.' % len(changed))
+    return 0
+
+
 def main(argv=None):
     # Workers are processes; keep BLAS single-threaded in each (set before numpy is imported).
     for var in ('OPENBLAS_NUM_THREADS', 'OMP_NUM_THREADS', 'MKL_NUM_THREADS'):
@@ -330,6 +352,7 @@ def main(argv=None):
     sp.add_argument('--host', default='0.0.0.0')
     sp.add_argument('--port', type=int, default=8000)
     add('migrate-metadata', cmd_migrate_metadata, 'convert the old SPELL metadata export into meta/datasets.tsv')
+    add('update-refs', cmd_update_refs, 'download the reference files listed under [updates] in raw/mod.toml')
 
     args = ap.parse_args(argv)
     return args.func(args) or 0

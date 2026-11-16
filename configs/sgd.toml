@@ -29,3 +29,10 @@ format = "spell_dump"
 [go]
 obo = "meta/go-basic.obo"
 gaf = ["meta/gene_association.sgd.gaf.gz"]
+
+[updates]
+# Reference files refreshed by `spell update-refs` (weekly via `spellctl update sgd` from cron).
+# Paths are relative to the raw data directory; a file is replaced only if its download passes checks.
+"meta/SGD_features.tab" = "https://downloads.yeastgenome.org/curation/chromosomal_feature/SGD_features.tab"
+"meta/go-basic.obo" = "https://purl.obolibrary.org/obo/go/go-basic.obo"
+"meta/gene_association.sgd.gaf.gz" = "https://downloads.yeastgenome.org/curation/literature/gene_association.sgd.gaf.gz"

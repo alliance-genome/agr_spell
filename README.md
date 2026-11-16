@@ -143,6 +143,8 @@ hypergeometric test against all genes annotated in that aspect, with Bonferroni 
 Benjamini-Hochberg corrections. The results page tests the top 50 hits (query genes
 excluded) and shows terms with FDR < 5%. Ontology and annotation versions are stored
 in the `build_info` table and shown under the results.
+`spell update-refs` refreshes these files (and `SGD_features.tab`) from the URLs under
+`[updates]` in `mod.toml`; on the server this runs weekly (see `deploy/README.md`).
 
 ## Data QC
 

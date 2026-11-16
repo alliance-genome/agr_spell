@@ -39,3 +39,8 @@ format = "dataset_table"
 obo = "meta/go-basic.obo"
 # One GAF per species with GO annotations; genes are matched on column 2 (WBGene ID).
 gaf = ["meta/c_elegans.PRJNA13758.current.go_annotations.gaf.gz"]   # TODO: list per-species files
+
+[updates]
+# Reference files refreshed by `spell update-refs` (weekly via `spellctl update wb` from cron).
+# TODO(Wen): download URLs for the gene table and GAF files, if WormBase publishes stable ones.
+"meta/go-basic.obo" = "https://purl.obolibrary.org/obo/go/go-basic.obo"

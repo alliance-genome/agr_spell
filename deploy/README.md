@@ -109,6 +109,44 @@ stay attached instead. Per-dataset results are in
 
 `start` recreates the container on the new image; `restart` would keep running the old one.
 
+### Weekly gene name and GO update
+
+Gene names, aliases and descriptions come from `SGD_features.tab`, and GO enrichment from
+`go-basic.obo` and the SGD GAF. The `[updates]` section of `raw/mod.toml` lists their download
+URLs (see `configs/sgd.toml`). `./spellctl update sgd` fetches them and, only if a file changed,
+rebuilds (about 20 minutes; the site stays up). A download is swapped in only if it passes
+checks (not empty, not an HTML error page, a complete gzip file, at least half the size of the
+current file); the replaced file is kept as `<name>.prev`. If a rebuild is already running,
+that week's update is skipped.
+
+cron runs it weekly on the instance (`crontab -l`):
+
+```
+# spell-next: weekly gene name and GO update for SGD (Sundays 10:00 UTC = 2-3 am Pacific)
+0 10 * * 0  /home/ubuntu/spell-next/deploy/spellctl update sgd >> /srv/spell/sgd/update.log 2>&1
+```
+
+`./spellctl status sgd` shows the last update; `/srv/spell/sgd/update.log` has the details.
+To update by hand (e.g. after an urgent gene rename), run `./spellctl update sgd`. Files a
+MOD edits by hand (expression files, `datasets.tsv`) are never downloaded.
+
+### Code updates
+
+`~/spell-next` on the instance is a git checkout of `main`. It pulls with a read-only
+deploy key (`~/.ssh/spell_next_deploy`, used for `github.com` via `~/.ssh/config`; listed
+under the repository's Settings → Deploy keys as "spell-dev (read-only)"), so nobody's
+personal GitHub credentials are needed on the instance. To deploy pushed changes:
+
+```bash
+cd ~/spell-next && git pull && cd deploy
+./spellctl image && ./spellctl start sgd
+```
+
+Data rebuilds are only needed when a change affects the build (search, QC or
+precompute code); front-end and API changes need just the steps above. `deploy/.env`
+holds instance-only settings (`SPELL_BIND=0.0.0.0` so the load balancer can reach the
+app); it is not in git and `git pull` leaves it alone.
+
 Containers restart automatically after a reboot (`restart: unless-stopped`). Each app
 is limited to 2 CPUs and 6 GB of memory; builds get 3 CPUs and 10 GB
 (`SPELL_BUILD_CPUS`, `SPELL_BUILD_MEM`).

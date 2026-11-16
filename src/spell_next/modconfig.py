@@ -58,6 +58,7 @@ DEFAULTS = {
         'obo': 'meta/go-basic.obo',
         'gaf': ['meta/gene_association.sgd.gaf.gz'],
     },
+    'updates': {},                      # {raw-relative path: download URL}, fetched by `spell update-refs`
 }
 
 
@@ -108,6 +109,11 @@ def validate(cfg):
         raise ConfigError('links.gene may only use {%s}: %s' % ('}, {'.join(LINK_FIELDS), err))
     if not isinstance(cfg['mod']['examples'], list):
         raise ConfigError('mod.examples must be a list of queries')
+    for rel, url in cfg['updates'].items():
+        if os.path.isabs(rel) or '..' in rel.replace('\\', '/').split('/'):
+            raise ConfigError('updates: %r must be a path inside the raw directory' % rel)
+        if not isinstance(url, str) or not url.startswith(('https://', 'http://', 'file://')):
+            raise ConfigError('updates: %r must map to an http(s) URL' % rel)
 
 
 def path(raw_dir, relative):
