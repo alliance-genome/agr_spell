@@ -23,7 +23,8 @@ const SCHEMES = {
 const display = (() => {
   const saved = {};
   try { Object.assign(saved, JSON.parse(localStorage.getItem('spellDisplay') || '{}')); } catch (e) { /* ignore */ }
-  return { scale: SCALES[saved.scale] ? saved.scale : 'z', scheme: SCHEMES[saved.scheme] ? saved.scheme : 'bluered' };
+  return { scale: SCALES[saved.scale] ? saved.scale : 'z', scheme: SCHEMES[saved.scheme] ? saved.scheme : 'bluered',
+    tagSort: saved.tagSort === 'name' ? 'name' : 'count' };
 })();
 function saveDisplay() {
   try { localStorage.setItem('spellDisplay', JSON.stringify(display)); } catch (e) { /* ignore */ }
@@ -123,6 +124,8 @@ function route() {
 
 const searchHash = (query, tags = []) =>
   `#/search/${encodeURIComponent(query)}${tags.length ? `?tags=${encodeURIComponent(tags.join('|'))}` : ''}`;
+const listingHash = (query, tags = []) =>
+  `#/expression/${encodeURIComponent(query)}${tags.length ? `?tags=${encodeURIComponent(tags.join('|'))}` : ''}`;
 
 let tagCache = null;
 async function allTags() {
@@ -130,18 +133,35 @@ async function allTags() {
   return tagCache;
 }
 
-// Checkbox list of dataset tags; calls onChange(selected Set) when a box is toggled.
+// Checkbox list of dataset tags; calls onChange(selected Set) when a box is toggled. Tags are sorted by the
+// number of datasets carrying them (only the TAGS_SHOWN most used and any selected ones, until "Show all") or
+// alphabetically (all of them); the choice is remembered with the display options.
 const TAGS_SHOWN = 15;
+const TAG_SORTS = { count: 'Most used', name: 'A–Z' };
 
-function tagPicker(container, tags, selected, onChange) {
+function tagPicker(container, byCount, selected, onChange) {
   container.classList.add('tag-picker');
-  const hidden = (i) => i >= TAGS_SHOWN && !selected.has(tags[i].tag);
+  const alpha = display.tagSort === 'name';
+  const top = new Set(byCount.slice(0, TAGS_SHOWN).map((t) => t.tag));
+  const tags = alpha ?
+    [...byCount].sort((a, b) => a.tag.localeCompare(b.tag, undefined, { sensitivity: 'base' })) : byCount;
+  const hidden = (i) => !alpha && !top.has(tags[i].tag) && !selected.has(tags[i].tag);
   const extra = tags.filter((t, i) => hidden(i)).length;
-  container.innerHTML = tags.map((t, i) => `<label class="tag${hidden(i) ? ' more' : ''}">
+  container.innerHTML = `<span class="tag-sort" role="group" aria-label="Sort tags">Sort:
+    ${Object.entries(TAG_SORTS).map(([k, v]) => `<button type="button" class="secondary" data-sort="${k}"
+      aria-pressed="${(display.tagSort || 'count') === k}">${v}</button>`).join('')}</span>` +
+    tags.map((t, i) => `<label class="tag${hidden(i) ? ' more' : ''}">
     <input type="checkbox" data-i="${i}" ${selected.has(t.tag) ? 'checked' : ''}>
     ${esc(t.tag)} <span class="sub">${t.count}</span></label>`).join('') +
     (extra ? `<button type="button" class="tag-toggle secondary" aria-expanded="false">Show all ${tags.length}
       tags</button>` : '');
+  container.querySelectorAll('.tag-sort button').forEach((b) => b.addEventListener('click', () => {
+    if (display.tagSort === b.dataset.sort) return;
+    display.tagSort = b.dataset.sort;
+    saveDisplay();
+    container.classList.remove('show-all');
+    tagPicker(container, byCount, selected, onChange);
+  }));
   const toggle = container.querySelector('.tag-toggle');
   if (toggle) {
     toggle.addEventListener('click', () => {
@@ -155,6 +175,25 @@ function tagPicker(container, tags, selected, onChange) {
     if (box.checked) selected.add(tag); else selected.delete(tag);
     onChange(selected);
   }));
+}
+
+// "Restrict to datasets with these tags" panel; hashFor(tags) gives the page to open for a tag selection.
+function tagFilterHtml(what, tags) {
+  return `<details class="tagfilter">
+      <summary>Restrict the ${what} to datasets with these tags${tags && tags.length ?
+        ` (${tags.length} selected)` : ''}</summary>
+      <div id="tag-panel" class="tag-picker"><p class="loading">Loading tags…</p></div>
+      <div class="tag-actions"><button type="button" id="tags-apply">Apply selected tags</button>
+        <button type="button" id="tags-clear" class="secondary">Clear</button></div>
+    </details>`;
+}
+
+function tagFilter(tags, hashFor) {
+  const picked = new Set(tags || []);
+  allTags().then((all) => tagPicker(document.getElementById('tag-panel'), all, picked, () => {}))
+    .catch((err) => { document.getElementById('tag-panel').innerHTML = `<p class="notice">${esc(err.message)}</p>`; });
+  document.getElementById('tags-apply').addEventListener('click', () => { location.hash = hashFor([...picked]); });
+  document.getElementById('tags-clear').addEventListener('click', () => { location.hash = hashFor([]); });
 }
 
 function showHome() {
@@ -226,16 +265,11 @@ function renderResults(r, query) {
     ${r.tags && r.tags.length ? `<p class="notice">Searched only the ${r.datasets_searched} datasets tagged
       ${r.tags.map((t) => `<b>${esc(t)}</b>`).join(' or ')}.
       <a href="${searchHash(query)}">Search all datasets</a></p>` : ''}
-    <p class="sub"><a href="#/expression/${encodeURIComponent(query)}${r.tags && r.tags.length ?
-      `?tags=${encodeURIComponent(r.tags.join('|'))}` : ''}">Show the expression of the query genes only</a>
+    <p class="sub"><a href="${listingHash(query, r.tags || [])}">Show the expression of the query genes only</a>
       (no co-expression search)</p>
-    <details class="tagfilter">
-      <summary>Restrict the search to datasets with these tags${r.tags && r.tags.length ?
-        ` (${r.tags.length} selected)` : ''}</summary>
-      <div id="tag-panel" class="tag-picker"><p class="loading">Loading tags…</p></div>
-      <div class="tag-actions"><button type="button" id="tags-apply">Search selected tags</button>
-        <button type="button" id="tags-clear" class="secondary">Clear</button></div>
-    </details>
+    ${tagFilterHtml('search', r.tags)}
+    <h2>Expression in the most informative datasets</h2>
+    <div id="heatmaps"></div>
     <div class="grid">
       <section>
         <h2>Co-expressed genes</h2>
@@ -251,9 +285,7 @@ function renderResults(r, query) {
       ${[['P', 'Process'], ['F', 'Function'], ['C', 'Component']].map(([a, l], i) =>
         `<button type="button" role="tab" data-aspect="${a}" aria-selected="${i === 0}">${l}</button>`).join('')}
     </div>
-    <div id="go-results"><p class="loading">Calculating enrichment…</p></div>
-    <h2>Expression in the most informative datasets</h2>
-    <div id="heatmaps"></div>`;
+    <div id="go-results"><p class="loading">Calculating enrichment…</p></div>`;
 
   const slug = fileSlug(r.query);
   const genesGrid = makeGrid(document.getElementById('genes-grid'), [
@@ -297,13 +329,7 @@ function renderResults(r, query) {
   }));
   showEnrichment(hitIds, 'P', r.query);
 
-  const picked = new Set(r.tags || []);
-  allTags().then((tags) => tagPicker(document.getElementById('tag-panel'), tags, picked, () => {}))
-    .catch((err) => { document.getElementById('tag-panel').innerHTML = `<p class="notice">${esc(err.message)}</p>`; });
-  document.getElementById('tags-apply').addEventListener('click', () => {
-    location.hash = searchHash(query, [...picked]);
-  });
-  document.getElementById('tags-clear').addEventListener('click', () => { location.hash = searchHash(query); });
+  tagFilter(r.tags, (tags) => searchHash(query, tags));
 
   const genes = [...r.query, ...r.genes.slice(0, HEATMAP_GENES)];
   heatmapPager(document.getElementById('heatmaps'), r.datasets, genes, r.query.length);
@@ -591,9 +617,10 @@ async function showListing(query, tags) {
       ` among those tagged ${tags.map(esc).join(' or ')}` : ''}. Datasets measuring the most query genes come
       first, then those where the genes vary most. No co-expression search is run;
       <a href="${searchHash(query, tags)}">search for co-expressed genes</a>.</p>
-    <section><h2>Datasets</h2><div id="listing-grid"></div></section>
+    ${tagFilterHtml('listing', tags)}
     <h2>Expression</h2>
-    <div id="heatmaps"></div>`;
+    <div id="heatmaps"></div>
+    <section><h2>Datasets</h2><div id="listing-grid"></div></section>`;
   const listingGrid = makeGrid(document.getElementById('listing-grid'), [
     { headerName: 'Dataset ID', field: 'id', hide: true },
     { headerName: 'GEO', field: 'geo_id', hide: true },
@@ -609,6 +636,7 @@ async function showListing(query, tags) {
   csvButton(document.getElementById('listing-grid').parentElement, listingGrid,
     `spell-next_${fileSlug(r.query)}_listing.csv`, ['id', 'title', 'geo_id', 'genes_measured', 'num_conds', 'variance']);
   heatmapPager(document.getElementById('heatmaps'), r.datasets, r.query, n);
+  tagFilter(tags, (t) => listingHash(query, t));
 }
 
 async function showHelp() {
