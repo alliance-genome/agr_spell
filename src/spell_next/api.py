@@ -71,8 +71,8 @@ def gene_info(con, ids):
 def dataset_info(con, ids):
     if not ids:
         return {}
-    rows = con.execute('SELECT id, geo_id, pubmed_id, title, first_author, year, tags, num_conds, num_genes, '
-                       'species, %s FROM datasets WHERE id IN (%s)'
+    rows = con.execute('SELECT id, geo_id, pubmed_id, title, first_author, authors, journal, year, tags, num_conds, '
+                       'num_genes, species, %s FROM datasets WHERE id IN (%s)'
                        % (state['assay_cols'], ','.join('?' * len(ids))), list(ids))
     return {r['id']: dict(r) for r in rows}
 
@@ -242,7 +242,7 @@ def dataset_list():
         has_qc = con.execute("SELECT 1 FROM sqlite_master WHERE name = 'dataset_qc'").fetchone()
         qc_cols = ", q.scale, q.warnings" if has_qc else ""
         qc_join = " LEFT JOIN dataset_qc q ON q.dataset_id = d.id" if has_qc else ""
-        rows = con.execute('SELECT d.id, d.title, d.first_author, d.year, d.journal, d.geo_id, d.pubmed_id, '
+        rows = con.execute('SELECT d.id, d.title, d.first_author, d.authors, d.year, d.journal, d.geo_id, d.pubmed_id, '
                            'd.num_conds, d.num_genes, d.tags, d.has_metadata, d.species, ' +
                            state['assay_cols'] + qc_cols +
                            ' FROM datasets d' + qc_join + ' ORDER BY d.year DESC, d.id DESC').fetchall()

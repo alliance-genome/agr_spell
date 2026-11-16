@@ -101,8 +101,17 @@ function cell(html) {
 }
 
 // "First author year · GEO · N conditions" without stray separators when parts are missing.
-const datasetMeta = (d, extra = []) => [[d.first_author, d.year].filter(Boolean).join(' '), d.geo_id, ...extra]
-  .filter(Boolean).map(esc).join(' · ');
+const datasetMeta = (d, extra = []) => [[d.first_author, d.year].filter(Boolean).join(' '), d.geo_id,
+  d.pubmed_id && `PMID ${d.pubmed_id}`, ...extra].filter(Boolean).map(esc).join(' · ');
+
+// Text a dataset filter box searches: title, authors, journal, year, GEO and PubMed IDs, tags, assay.
+const datasetText = (d) => [d.title, d.first_author, d.authors, d.journal, d.year, d.geo_id,
+  d.pubmed_id && `PMID ${d.pubmed_id} PMID:${d.pubmed_id} ${d.pubmed_id}`, d.id,
+  Array.isArray(d.tags) ? d.tags.join(' ') : (d.tags || '').replaceAll('|', ' '), d.assay]
+  .filter(Boolean).join(' ').toLowerCase();
+// Every word of the filter must appear (in any field).
+const datasetMatches = (d, text) => text.toLowerCase().split(/\s+/).filter(Boolean)
+  .every((w) => datasetText(d).includes(w));
 
 function bar(text, fraction) {
   return cell(`<div class="bar"><span>${esc(text)}</span>
@@ -675,12 +684,16 @@ async function showListing(query, filter = NO_FILTER) {
       first, then those where the genes vary most. No co-expression search is run;
       <a href="${searchHash(query, filter)}">search for co-expressed genes</a>.</p>
     ${tagFilterHtml('listing', filter)}
+    <div class="ds-tools"><input type="search" id="listing-filter" aria-label="Find a dataset"
+      placeholder="Find a dataset: title, author, GEO or PubMed ID…"></div>
+    <p class="sub" id="listing-count" hidden></p>
     <h2>Expression</h2>
     <div id="heatmaps"></div>
     <section><h2>Datasets</h2><div id="listing-grid"></div></section>`;
   const listingGrid = makeGrid(document.getElementById('listing-grid'), [
     { headerName: 'Dataset ID', field: 'id', hide: true },
     { headerName: 'GEO', field: 'geo_id', hide: true },
+    { headerName: 'PubMed', field: 'pubmed_id', hide: true },
     { headerName: 'Dataset', field: 'title', flex: 1, minWidth: 260, cellRenderer: (c) => cell(
       `<div class="clamp1"><a href="#/dataset/${c.data.id}" title="${esc(c.value)}">${esc(c.value)}</a></div>
        <span class="sub">${datasetMeta(c.data)}</span>`) },
@@ -691,9 +704,26 @@ async function showListing(query, filter = NO_FILTER) {
       valueFormatter: (c) => c.value.toFixed(3) },
   ], r.datasets);
   csvButton(document.getElementById('listing-grid').parentElement, listingGrid,
-    `spell-next_${fileSlug(r.query)}_listing.csv`, ['id', 'title', 'geo_id', 'genes_measured', 'num_conds', 'variance']);
-  heatmapPager(document.getElementById('heatmaps'), r.datasets, r.query, n);
+    `spell-next_${fileSlug(r.query)}_listing.csv`,
+    ['id', 'title', 'geo_id', 'pubmed_id', 'genes_measured', 'num_conds', 'variance']);
+  const heatmaps = document.getElementById('heatmaps');
+  heatmapPager(heatmaps, r.datasets, r.query, n);
   tagFilter(filter, (f) => listingHash(query, f));
+  // "Find a dataset": narrows both the heatmaps and the table.
+  let timer = null;
+  document.getElementById('listing-filter').addEventListener('input', (e) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      const text = e.target.value.trim();
+      const shown = text ? r.datasets.filter((d) => datasetMatches(d, text)) : r.datasets;
+      const count = document.getElementById('listing-count');
+      count.hidden = !text;
+      count.textContent = `${shown.length} of ${r.datasets.length} datasets match “${text}”.`;
+      listingGrid.setGridOption('rowData', shown);
+      if (shown.length) heatmapPager(heatmaps, shown, r.query, n);
+      else heatmaps.innerHTML = '<p class="sub">No dataset matches.</p>';
+    }, 200);
+  });
 }
 
 async function showHelp() {
@@ -737,7 +767,8 @@ async function showHelp() {
     <p>A listing shows your genes' expression in every dataset that measures them, without ranking other genes:
       use <i>Show the expression of the query genes only</i> on a results page, or go to
       <code>#/expression/${esc(CONFIG.mod.listing_example || CONFIG.mod.examples[0] || '')}</code>.
-      Tags restrict listings too.</p>
+      Tags restrict listings too. <i>Find a dataset</i> narrows the heatmaps and table to datasets whose
+      title, authors, journal, GEO ID or PubMed ID contain every word typed.</p>
     <h2>Display options</h2>
     <p>Above the heatmaps, <i>Scale</i> switches between standardized values (z-scores), log change from the
       gene's mean, and rank order; <i>Colours</i> offers blue/red, red/green and yellow/blue. Your choice is
@@ -825,7 +856,8 @@ async function showDatasets(filter = NO_FILTER) {
       ${assaySelect('ds-assay', assays, filter.assay)}
       ${multiSpecies() ? `<select id="ds-species" aria-label="Species"><option value="">All species</option>${
         CONFIG.species.map((sp) => `<option>${esc(sp)}</option>`).join('')}</select>` : ''}
-      <input type="search" id="ds-filter" placeholder="Filter by title, author, GEO ID…" aria-label="Filter datasets">
+      <input type="search" id="ds-filter" aria-label="Filter datasets"
+        placeholder="Filter by title, author, GEO or PubMed ID…">
       <form id="ds-search" class="search">
         <input type="search" id="ds-genes" placeholder="Gene name(s) to search in the selected datasets"
           aria-label="Genes to search in the selected datasets">
@@ -838,10 +870,13 @@ async function showDatasets(filter = NO_FILTER) {
     theme: GRID_THEME,
     rowData: datasets,
     columnDefs: [
-      { headerName: 'Dataset', field: 'title', flex: 2, minWidth: 280, cellRenderer: (c) => cell(
+      { headerName: 'Dataset', field: 'title', flex: 2, minWidth: 280, getQuickFilterText: (c) => datasetText(c.data),
+        cellRenderer: (c) => cell(
         `<div class="clamp1"><a href="#/dataset/${c.data.id}" title="${esc(c.value)}">${esc(c.value)}</a></div>
          <span class="sub">${esc([c.data.first_author, c.data.year, c.data.journal].filter(Boolean).join(' · '))}</span>`) },
-      { headerName: 'GEO', field: 'geo_id', width: 140 },
+      { headerName: 'GEO', field: 'geo_id', width: 120 },
+      { headerName: 'PubMed', field: 'pubmed_id', width: 120, cellRenderer: (c) => cell(c.value ?
+        `<a href="https://pubmed.ncbi.nlm.nih.gov/${c.value}/" target="_blank" rel="noopener">${c.value}</a>` : '') },
       { headerName: 'Species', field: 'species', width: 170, hide: !multiSpecies() },
       { headerName: 'Year', field: 'year', width: 90, type: 'numericColumn' },
       { headerName: 'Conditions', field: 'num_conds', width: 120, type: 'numericColumn' },
