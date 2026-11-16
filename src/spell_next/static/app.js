@@ -161,7 +161,9 @@ async function allTags() {
 
 // Checkbox list of dataset tags; calls onChange(selected Set) when a box is toggled. Tags are sorted by the
 // number of datasets carrying them (only the TAGS_SHOWN most used and any selected ones, until "Show all") or
-// alphabetically (all of them); the choice is remembered with the display options.
+// alphabetically (all of them); the choice is remembered with the display options. When the MOD's keyword list
+// gives categories, tags are grouped under them (in keyword-list order; tags not in the list go under "Other"),
+// and each tag's definition shows on hover.
 const TAGS_SHOWN = 15;
 const TAG_SORTS = { count: 'Most used', name: 'A–Z' };
 
@@ -171,14 +173,26 @@ function tagPicker(container, byCount, selected, onChange) {
   const top = new Set(byCount.slice(0, TAGS_SHOWN).map((t) => t.tag));
   const tags = alpha ?
     [...byCount].sort((a, b) => a.tag.localeCompare(b.tag, undefined, { sensitivity: 'base' })) : byCount;
-  const hidden = (i) => !alpha && !top.has(tags[i].tag) && !selected.has(tags[i].tag);
-  const extra = tags.filter((t, i) => hidden(i)).length;
+  const hidden = (t) => !alpha && !top.has(t.tag) && !selected.has(t.tag);
+  const extra = tags.filter(hidden).length;
+  const chip = (t) => `<label class="tag${hidden(t) ? ' more' : ''}"${t.definition ?
+    ` title="${esc(t.definition)}"` : ''}>
+    <input type="checkbox" data-tag="${esc(t.tag)}" ${selected.has(t.tag) ? 'checked' : ''}>
+    ${esc(t.tag)} <span class="sub">${t.count}</span></label>`;
+  let body = tags.map(chip).join('');
+  if (tags.some((t) => t.category)) {
+    const groups = new Map();
+    for (const t of [...byCount].sort((a, b) => (a.position ?? Infinity) - (b.position ?? Infinity))) {
+      if (!groups.has(t.category || 'Other')) groups.set(t.category || 'Other', []);
+    }
+    for (const t of tags) groups.get(t.category || 'Other').push(t);
+    body = [...groups].map(([name, ts]) => `<div class="tag-group${ts.every(hidden) ? ' more' : ''}">
+      <span class="tag-group-name">${esc(name)}</span><div class="tag-group-tags">${ts.map(chip).join('')}</div>
+      </div>`).join('');
+  }
   container.innerHTML = `<span class="tag-sort" role="group" aria-label="Sort tags">Sort:
     ${Object.entries(TAG_SORTS).map(([k, v]) => `<button type="button" class="secondary" data-sort="${k}"
-      aria-pressed="${(display.tagSort || 'count') === k}">${v}</button>`).join('')}</span>` +
-    tags.map((t, i) => `<label class="tag${hidden(i) ? ' more' : ''}">
-    <input type="checkbox" data-i="${i}" ${selected.has(t.tag) ? 'checked' : ''}>
-    ${esc(t.tag)} <span class="sub">${t.count}</span></label>`).join('') +
+      aria-pressed="${(display.tagSort || 'count') === k}">${v}</button>`).join('')}</span>` + body +
     (extra ? `<button type="button" class="tag-toggle secondary" aria-expanded="false">Show all ${tags.length}
       tags</button>` : '');
   container.querySelectorAll('.tag-sort button').forEach((b) => b.addEventListener('click', () => {
@@ -197,8 +211,7 @@ function tagPicker(container, byCount, selected, onChange) {
     });
   }
   container.querySelectorAll('input').forEach((box) => box.addEventListener('change', () => {
-    const tag = tags[Number(box.dataset.i)].tag;
-    if (box.checked) selected.add(tag); else selected.delete(tag);
+    if (box.checked) selected.add(box.dataset.tag); else selected.delete(box.dataset.tag);
     onChange(selected);
   }));
 }
@@ -716,7 +729,8 @@ async function showHelp() {
       shock, carbon utilization). On a results page open
       <i>Restrict the search to an assay or to datasets with these tags</i>, or choose an assay and tags on the
       <a href="#/datasets">Datasets</a> page and search there. A dataset is used if it is of the chosen assay
-      and carries any selected tag.
+      and carries any selected tag. Tags are ${esc(MOD())} keywords, grouped by category; hover over a tag for its
+      definition. <i>Sort</i> lists them by how many datasets carry them, or alphabetically.
       Unlike the original SPELL, which searched every dataset and only hid the others from the list, the search
       itself is limited to the tagged datasets, so the gene ranking reflects only them.</p>
     <h2>Expression without a search</h2>
@@ -905,7 +919,7 @@ async function showDataset(id) {
       <dt>Assay</dt><dd>${d.assay ? `<a href="#/datasets?assay=${encodeURIComponent(d.assay)}">${esc(d.assay)}</a>`
         : '—'}</dd>
       ${d.value_type ? `<dt>Values</dt><dd>${esc(d.value_type)}</dd>` : ''}
-      <dt>Tags</dt><dd>${(d.tags || '').split('|').filter(Boolean).map((t) =>
+      <dt>Tags</dt><dd id="ds-tag-list">${(d.tags || '').split('|').filter(Boolean).map((t) =>
         `<a href="#/datasets?tags=${encodeURIComponent(t)}">${esc(t)}</a>`).join(', ') || '—'}</dd>
       <dt>File</dt><dd>${esc(d.filename)}</dd>
       <dt>Download</dt><dd><a href="/api/datasets/${d.id}/download" download>Expression data as searched
@@ -915,6 +929,18 @@ async function showDataset(id) {
     ${d.description ? `<h2>Summary</h2><p>${esc(d.description)}</p>` : ''}
     <h2>Conditions</h2>
     <ol class="conds">${d.conditions.map((c) => `<li>${esc(c)}</li>`).join('')}</ol>`;
+  // Add each tag's definition and a link to its keyword page, when the keyword list provides them.
+  allTags().then((all) => {
+    const info = new Map(all.map((t) => [t.tag, t]));
+    const box = document.getElementById('ds-tag-list');
+    if (!box) return;
+    box.innerHTML = (d.tags || '').split('|').filter(Boolean).map((t) => {
+      const k = info.get(t) || {};
+      return `<a href="#/datasets?tags=${encodeURIComponent(t)}"${k.definition ? ` title="${esc(k.definition)}"` : ''}>
+        ${esc(t)}</a>${k.link ? ` <a class="sub" href="${esc(k.link)}" target="_blank" rel="noopener"
+        title="${esc(MOD())} keyword page">↗</a>` : ''}`;
+    }).join(', ') || '—';
+  }).catch(() => {});
 }
 
 function qcSection(qc) {

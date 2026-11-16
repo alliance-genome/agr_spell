@@ -96,6 +96,15 @@ def test_expression_listing_restricted_to_an_assay(client):
     assert body['assay'] == 'microarray' and [d['geo_id'] for d in body['datasets']] == ['GSE9002']
 
 
+def test_tags_carry_keyword_categories_definitions_and_links(client):
+    tags = {t['tag']: t for t in client.get('/api/tags').json()}
+    assert set(tags) == {'stress', 'growth'}                      # only tags in use; heat shock is not
+    assert (tags['stress']['category'], tags['stress']['definition']) == \
+        ('Stress & stimuli', 'Responses to stress, of any kind.')
+    assert tags['growth']['link'] == 'https://example.org/keyword/growth_kw'
+    assert tags['growth']['position'] < tags['stress']['position']   # keyword-list order
+
+
 def test_bad_config_is_rejected(tmp_path):
     (tmp_path / 'mod.toml').write_text('[genes]\nformat = "excel"\n')
     with pytest.raises(modconfig.ConfigError):

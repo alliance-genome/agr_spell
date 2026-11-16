@@ -107,6 +107,20 @@ def test_validate_flags_missing_assays(root, capsys):
     assert '1 datasets have no assay' in capsys.readouterr().out
 
 
+def test_validate_checks_tags_against_keywords(root, capsys):
+    assert run('validate', root, '--workers', '2') == 0
+    out = capsys.readouterr().out
+    assert 'not in the keyword list' not in out and 'have no category' not in out
+    tsv = root / 'raw' / 'meta' / 'datasets.tsv'
+    tsv.write_text(tsv.read_text().replace('\tgrowth\t', '\tgrowths\t', 1))
+    kw = root / 'raw' / 'meta' / 'keywords.csv'
+    kw.write_text(kw.read_text().replace('Stress & stimuli,heat shock', ',heat shock'))
+    assert run('validate', root, '--workers', '2') == 0                  # warnings only
+    out = capsys.readouterr().out
+    assert "tag 'growths' is not in the keyword list (1 datasets" in out
+    assert '1 keywords have no category (shown under "Other"): heat shock' in out
+
+
 def test_validate_flags_unknown_assays(root, capsys):
     tsv = root / 'raw' / 'meta' / 'datasets.tsv'
     tsv.write_text(tsv.read_text().replace('\tmicroarray\t', '\tmicro-array\t'))

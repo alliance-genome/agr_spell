@@ -157,6 +157,34 @@ def validate(raw_dir, workers=None):
     return report
 
 
+def _check_keywords(report, raw_dir, cfg, meta, filenames):
+    """Warn about dataset tags that are not in the keyword list (typos, retired terms)."""
+    from spell_next.build import read_keywords
+
+    rel = cfg['datasets'].get('keywords')
+    if not rel:
+        return
+    path = modconfig.path(raw_dir, rel)
+    if not os.path.exists(path):
+        report.add('warning', rel, 'missing: tags will be shown without categories')
+        return
+    keywords = read_keywords(path)
+    known = {k['name'] for k in keywords}
+    uncategorised = [k['name'] for k in keywords if not k['category']]
+    if uncategorised:
+        report.add('warning', rel, '%d keywords have no category (shown under "Other"): %s'
+                   % (len(uncategorised), ', '.join(uncategorised[:5])))
+    unknown = {}
+    for f in filenames:
+        for t in ((meta.get(f) or {}).get('tags') or '').split('|'):
+            if t and t not in known:
+                unknown.setdefault(t, []).append(f)
+    for t, files in sorted(unknown.items()):
+        report.add('warning', cfg['datasets']['metadata'] or 'datasets',
+                   'tag %r is not in the keyword list (%d datasets: %s%s)'
+                   % (t, len(files), ', '.join(files[:3]), ' …' if len(files) > 3 else ''))
+
+
 def _check_assays(report, cfg, meta, filenames):
     """Warn about missing or unknown assays and RNA-seq files that are not on a log scale."""
     where = cfg['datasets']['metadata'] or 'datasets'
@@ -211,6 +239,7 @@ def _check_metadata(report, raw_dir, cfg, gene_names, filenames):
                    '%d datasets have no metadata title (shown by file name): %s%s'
                    % (len(missing), ', '.join(missing[:5]), ' …' if len(missing) > 5 else ''))
     _check_assays(report, cfg, meta, filenames)
+    _check_keywords(report, raw_dir, cfg, meta, filenames)
     extra = sorted(set(meta) - set(filenames))
     if extra:
         report.add('warning', cfg['datasets']['metadata'] or 'datasets',

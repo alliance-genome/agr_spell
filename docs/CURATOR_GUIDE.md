@@ -52,6 +52,7 @@ Everything SPELL serves is built from the files in `/srv/spell/sgd/raw/`:
 | `raw/expression/` | One expression file (PCL) per dataset | Curators |
 | `raw/dataset_list.txt` | Dataset ID and file name for every dataset SPELL builds | Curators |
 | `raw/meta/datasets.tsv` | Title, authors, tags, assay, ... for each dataset | Curators |
+| `raw/meta/keywords.csv` | SGD keywords: categories and definitions for tags | Curators |
 | `raw/gene_list.txt` | SPELL's gene IDs and systematic names | Rarely (new genes) |
 | `raw/meta/SGD_features.tab` | Gene names, aliases, descriptions | Automatic, weekly |
 | `raw/meta/go-basic.obo`, `gene_association.sgd.gaf.gz` | GO ontology and annotations | Automatic, weekly |
@@ -155,12 +156,20 @@ so validate warns: fix the file rather than relying on it.
 
 Metadata changes need a rebuild like any other change.
 
-### Keyword categories (coming)
+### Keywords and their categories
 
-The tag picker will group keywords under categories (Stress & stimuli, Metabolism, ...), with each
-keyword's definition on hover and a link to its SGD keyword page. The categories will live in one
-file next to `datasets.tsv`; changing a category means editing that file and rebuilding. Categories
-only group keywords for display: datasets keep their keywords, and searches still filter by keyword.
+`raw/meta/keywords.csv` is the list of SGD keywords that tags may use, exported from the SGD
+database. Columns: `category`, `display_name`, `format_name`, `obj_url`, `description`.
+
+- **The tag picker groups tags by `category`**, in the order categories first appear in the file.
+  Categories only group keywords for display: datasets keep their keywords, and searches still
+  filter by keyword.
+- **`description`** is shown when hovering over a tag; **`format_name`** builds the link to the
+  keyword's SGD page from each dataset page.
+- **To move a keyword to another category** (or rename or add a category), edit the `category`
+  column, validate and rebuild. The file can be edited in Excel; save it as CSV.
+- **Validate warns about any dataset tag that is not in this file** (a typo, or a keyword not
+  yet exported), and about keywords with no category; those appear under "Other" on the site.
 
 ## 5. Retiring and restoring datasets
 
@@ -228,6 +237,8 @@ After a rebuild, check:
 | `assay 'X' is not one of microarray, RNA-seq` | Typo in `assay` |
 | `N datasets have no metadata title` | Add the row or title in `datasets.tsv` |
 | `N metadata rows name files not in dataset_list.txt` | Leftover rows, or a file name mismatch |
+| `tag 'X' is not in the keyword list` | Typo in `tags`, or add the keyword to `keywords.csv` |
+| `N keywords have no category` | Fill in `category` in `keywords.csv` |
 | `only N% of rows match known genes` | Check the gene names in the first column |
 | `duplicate condition names`, `empty condition name(s)` | Rename the columns |
 

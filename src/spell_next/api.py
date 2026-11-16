@@ -342,13 +342,19 @@ def assay_list():
 
 @app.get('/api/tags')
 def tag_list():
-    """Dataset tags with the number of datasets carrying each."""
+    """Dataset tags with the number of datasets carrying each, and their keyword category, definition and
+    link (null for tags not in the keyword list, and for builds without one)."""
     counts = {}
     with db() as con:
         for (tags,) in con.execute('SELECT tags FROM datasets'):
             for t in split_tags(tags):
                 counts[t] = counts.get(t, 0) + 1
-    return [{'tag': t, 'count': n} for t, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
+        has_kw = con.execute("SELECT 1 FROM sqlite_master WHERE name = 'keywords'").fetchone()
+        kw = {r['name']: dict(r) for r in con.execute('SELECT * FROM keywords')} if has_kw else {}
+    return [{'tag': t, 'count': n, 'category': kw.get(t, {}).get('category'),
+             'definition': kw.get(t, {}).get('definition'), 'link': kw.get(t, {}).get('link'),
+             'position': kw.get(t, {}).get('position')}
+            for t, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
 
 
 class EnrichmentRequest(BaseModel):

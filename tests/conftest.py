@@ -16,6 +16,7 @@ examples = ["a-1", "a-1 a-2"]
 
 [links]
 gene = "https://example.org/gene/{mod_id}"
+keyword = "https://example.org/keyword/{format_name}"
 
 [genes]
 file = "meta/genes.tsv"
@@ -24,10 +25,18 @@ format = "gene_table"
 [datasets]
 metadata = "meta/datasets.tsv"
 format = "dataset_table"
+keywords = "meta/keywords.csv"
 
 [go]
 obo = "meta/go.obo"
 gaf = ["meta/a.gaf.gz", "meta/b.gaf"]
+'''
+
+# Keyword list as SGD exports it (comma-separated); "growth" comes first, so its category is listed first.
+KEYWORDS = '''category,display_name,format_name,obj_url,description
+Growth,growth,growth_kw,/keyword/growth_kw,Changes in growth rate.
+Stress & stimuli,stress,stress,/keyword/stress,"Responses to stress, of any kind."
+Stress & stimuli,heat shock,heat_shock,/keyword/heat_shock,Responses to high temperature.
 '''
 
 OBO = '''format-version: 1.2
@@ -66,6 +75,7 @@ def make_toy_raw(raw, n_datasets_per_species=2, seed=7):
     (raw / 'meta').mkdir(parents=True, exist_ok=True)
     (raw / 'mod.toml').write_text(CONFIG)
     (raw / 'meta' / 'go.obo').write_text(OBO)
+    (raw / 'meta' / 'keywords.csv').write_text(KEYWORDS)
 
     gene_list, gene_rows = [], ['systematic\tmod_id\tstandard\taliases\tspecies\tdescription']
     gid = 1000

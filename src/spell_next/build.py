@@ -14,6 +14,7 @@ and GO files it names. OUT_DIR receives:
 import argparse
 import csv
 import gzip
+import io
 import json
 import os
 import re
@@ -86,6 +87,13 @@ CREATE TABLE gene_go (
     term_id TEXT NOT NULL,          -- annotation propagated to all ancestors (is_a, part_of)
     PRIMARY KEY (gene_id, term_id)
 ) WITHOUT ROWID;
+CREATE TABLE keywords (            -- the MOD's tag vocabulary, in the order of its keyword list
+    name TEXT PRIMARY KEY,
+    category TEXT,                  -- groups tags in the tag picker
+    definition TEXT,
+    link TEXT,                      -- the keyword's page on the MOD's site
+    position INTEGER NOT NULL
+);
 CREATE TABLE build_info (
     key TEXT PRIMARY KEY,
     value TEXT
@@ -187,6 +195,45 @@ def read_dataset_table(path):
                 'assay': get('assay'), 'value_type': get('value_type'),
             }
     return out
+
+
+def read_keywords(path):
+    """The keyword list (comma- or tab-separated, header row) as a list of dicts, in file order.
+
+    Columns: display_name (or name/tag/keyword; required), category, description (or
+    definition), format_name (used in keyword links).
+    """
+    with open(path, newline='', encoding='utf-8-sig', errors='replace') as fh:
+        text = fh.read()
+    delimiter = '\t' if '\t' in text.split('\n', 1)[0] else ','
+    out, seen = [], set()
+    for row in csv.DictReader(io.StringIO(text), delimiter=delimiter):
+        row = {(k or '').strip().lower(): (v or '').strip() for k, v in row.items()}
+        name = row.get('display_name') or row.get('name') or row.get('tag') or row.get('keyword')
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append({'name': name, 'category': row.get('category') or None,
+                    'definition': row.get('description') or row.get('definition') or None,
+                    'format_name': row.get('format_name') or name.replace(' ', '_')})
+    return out
+
+
+def write_keywords(db, raw_dir, cfg):
+    rel = cfg['datasets'].get('keywords')
+    path = modconfig.path(raw_dir, rel)
+    if not path:
+        return
+    if not os.path.exists(path):
+        print('keywords: %s not found; tags are shown without categories' % rel)
+        return
+    keywords = read_keywords(path)
+    template = cfg['links'].get('keyword')
+    db.executemany('INSERT INTO keywords VALUES (?,?,?,?,?)', [
+        (k['name'], k['category'], k['definition'],
+         template.format(format_name=k['format_name'], name=k['name']) if template else None, i)
+        for i, k in enumerate(keywords)])
+    print('keywords: %d in %d categories' % (len(keywords), len({k['category'] for k in keywords if k['category']})))
 
 
 def read_gene_info(raw_dir, cfg):
@@ -377,6 +424,7 @@ def run_build(raw_dir, out_dir, workers=None, limit=None, no_qc=False, centre=Fa
     db = sqlite3.connect(db_path)
     write_metadata(db, comp, read_gene_info(raw_dir, cfg), read_dataset_info(raw_dir, cfg),
                    cfg['genes'].get('default_species'))
+    write_keywords(db, raw_dir, cfg)
     db.executemany('INSERT OR REPLACE INTO build_info VALUES (?,?)',
                    [('config', json.dumps(modconfig.public(cfg))), ('mod', cfg['mod']['id']),
                     ('built', time.strftime('%Y-%m-%d %H:%M:%S'))])

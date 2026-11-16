@@ -13,6 +13,8 @@ listing_example = "GAL1 GAL7 GAL10"
 [links]
 # Placeholders: {mod_id}, {systematic}, {standard}
 gene = "https://www.yeastgenome.org/locus/{mod_id}"
+# Keyword pages; placeholders: {format_name}, {name}
+keyword = "https://www.yeastgenome.org/keyword/{format_name}"
 
 [genes]
 # downloads.yeastgenome.org/curation/chromosomal_feature/SGD_features.tab
@@ -25,6 +27,9 @@ default_species = "Saccharomyces cerevisiae"
 # can instead be listed in a table: format = "dataset_table" (see README).
 metadata = "meta/SQLdump2023_fordownloadfiles.txt"
 format = "spell_dump"
+# SGD keywords (display_name, category, description, format_name): the tag vocabulary,
+# grouped by category in the tag picker; validate warns about tags not in it.
+keywords = "meta/keywords.csv"
 
 [go]
 obo = "meta/go-basic.obo"

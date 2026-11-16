@@ -86,7 +86,10 @@ name used in the PCL files), `mod_id`, `standard`, `aliases` (`|`-separated),
 `geo_id`, `pubmed_id`, `title`, `description`, `first_author`, `authors`, `journal`,
 `year`, `tags` (`|`-separated), `assay` (one of `[datasets] assays`, by default
 `microarray` or `RNA-seq`) and `value_type` (what the values are, e.g. `log2 TMM CPM`,
-`log2 TPM`, `vst`, `log2 ratio`). The site filters searches, listings and the dataset list
+`log2 TPM`, `vst`, `log2 ratio`). An optional keyword list (`[datasets] keywords`, columns
+`display_name`, `category`, `description`, `format_name`) groups tags by category in the tag
+picker, shows definitions, links tags via `[links] keyword`, and lets `spell validate` flag
+tags not in the list. The site filters searches, listings and the dataset list
 by assay; `spell validate` warns about missing or unknown assays, RNA-seq datasets without a
 `value_type`, and RNA-seq values that are not log-scale (raw counts or TPM/FPKM).
 

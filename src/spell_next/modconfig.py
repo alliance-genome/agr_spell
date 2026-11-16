@@ -31,6 +31,7 @@ import tomllib
 GENE_FORMATS = ('sgd_features', 'gene_table')
 DATASET_FORMATS = ('spell_dump', 'dataset_table')
 LINK_FIELDS = ('mod_id', 'systematic', 'standard')
+KEYWORD_LINK_FIELDS = ('format_name', 'name')
 
 DEFAULTS = {
     'mod': {
@@ -44,6 +45,7 @@ DEFAULTS = {
     },
     'links': {
         'gene': 'https://www.yeastgenome.org/locus/{mod_id}',
+        'keyword': None,                # e.g. 'https://www.yeastgenome.org/keyword/{format_name}'
     },
     'genes': {
         'file': 'meta/SGD_features.tab',
@@ -54,6 +56,7 @@ DEFAULTS = {
         'metadata': None,               # None: the newest meta/SQLdump* file, if any
         'format': 'spell_dump',
         'assays': ['microarray', 'RNA-seq'],   # allowed values of the dataset table's assay column
+        'keywords': None,               # keyword list: display_name, category, description, format_name
     },
     'go': {
         'obo': 'meta/go-basic.obo',
@@ -108,6 +111,11 @@ def validate(cfg):
         template.format(**{f: 'x' for f in LINK_FIELDS})
     except (KeyError, IndexError) as err:
         raise ConfigError('links.gene may only use {%s}: %s' % ('}, {'.join(LINK_FIELDS), err))
+    if cfg['links'].get('keyword'):
+        try:
+            cfg['links']['keyword'].format(**{f: 'x' for f in KEYWORD_LINK_FIELDS})
+        except (KeyError, IndexError) as err:
+            raise ConfigError('links.keyword may only use {%s}: %s' % ('}, {'.join(KEYWORD_LINK_FIELDS), err))
     if not isinstance(cfg['mod']['examples'], list):
         raise ConfigError('mod.examples must be a list of queries')
     assays = cfg['datasets']['assays']
