@@ -78,6 +78,7 @@ article.doc li { margin-bottom: 6px; }
 .tag .sub { font-size: 12px; }
 details.tagfilter { margin: 8px 0 16px; }
 details.tagfilter summary { cursor: pointer; color: var(--accent); }
+details.tagfilter summary .chosen { color: var(--text); font-weight: 600; }
 .assay-pick { margin: 8px 0 0; font-size: 14px; }
 .assay-pick select, .ds-tools select { padding: 6px 8px; font: inherit; }
 .tag-actions { display: flex; gap: 8px; }

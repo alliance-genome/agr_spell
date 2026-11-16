@@ -203,12 +203,17 @@ function tagPicker(container, byCount, selected, onChange) {
   }));
 }
 
+const TAGS_NAMED = 4;     // the filter header names up to this many selected tags, then "and N more"
+
 // "Restrict to an assay or to datasets with these tags" panel; hashFor(filter) gives the page to open.
 function tagFilterHtml(what, f) {
-  const chosen = [f.assay, f.tags.length ? `${f.tags.length} tag${f.tags.length > 1 ? 's' : ''}` : '']
-    .filter(Boolean).join(', ');
+  const named = f.tags.slice(0, TAGS_NAMED).join(', ') +
+    (f.tags.length > TAGS_NAMED ? ` and ${f.tags.length - TAGS_NAMED} more` : '');
+  const chosen = [f.assay, f.tags.length ? `${f.tags.length > 1 ? 'tags' : 'tag'}: ${named}` : '']
+    .filter(Boolean).join('; ');
   return `<details class="tagfilter">
-      <summary>Restrict the ${what} to an assay or to datasets with these tags${chosen ? ` (${esc(chosen)})` : ''}
+      <summary title="${esc([f.assay, f.tags.join(', ')].filter(Boolean).join('; '))}">Restrict the ${what} to an
+        assay or to datasets with these tags${chosen ? ` <span class="chosen">(${esc(chosen)})</span>` : ''}
       </summary>
       <div id="assay-panel" class="assay-pick"></div>
       <div id="tag-panel" class="tag-picker"><p class="loading">Loading tags…</p></div>
