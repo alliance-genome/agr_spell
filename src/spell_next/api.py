@@ -46,6 +46,7 @@ async def lifespan(app):
     state['go'] = load_go_index()
     state['config'] = load_config()
     state['assay_cols'] = assay_columns()
+    state['precomputed'] = precomputed()
     state['log'] = SearchLog(LOG_DIR or None)
     yield
     state.clear()
@@ -110,6 +111,13 @@ def load_go_index():
     return index
 
 
+def precomputed():
+    """Whether the build stores single-gene results (builds made before the setting existed always do)."""
+    with db() as con:
+        row = con.execute("SELECT value FROM build_info WHERE key = 'precomputed'").fetchone()
+    return row is None or row[0] == '1'
+
+
 def assay_columns():
     """SQL for the assay columns (NULL for builds made before datasets had them)."""
     with db() as con:
@@ -146,7 +154,9 @@ def lookup(q: str = Query(..., description='gene names separated by spaces or co
 @app.get('/api/genes/{gene_id}/coexpression')
 def coexpression(gene_id: int, limit: int = Query(50, le=100), datasets: int = Query(100, le=100),
                  via: str = Query('', pattern='^(|embed)$')):
-    """Precomputed single-gene SPELL result."""
+    """Single-gene SPELL result: precomputed, or searched live when the build has no precomputed results."""
+    if not state['precomputed']:
+        return run_live([gene_id], None, limit, datasets, log_kind=via or 'single')
     with db() as con:
         query = gene_info(con, [gene_id]).get(gene_id)
         if query is None:
@@ -203,27 +213,34 @@ def live_search(req: SearchRequest):
         raise HTTPException(422, {'message': 'no recognised genes', 'unknown': unknown, 'ambiguous': ambiguous})
     if dataset_ids is not None and not dataset_ids:
         raise HTTPException(422, {'message': 'no datasets match the selected tags, assay and datasets'})
-    if len(ids) == 1 and dataset_ids is None:
+    if len(ids) == 1 and dataset_ids is None and state['precomputed']:
         result = coexpression(ids[0], req.limit, req.datasets, '')
         return {**result, 'unknown': unknown, 'ambiguous': ambiguous, 'tags': [], 'assay': None,
                 'datasets_searched': None}
+    result = run_live(ids, dataset_ids, req.limit, req.datasets, filters=log_filters(req.tags, req.assay,
+                                                                                    req.dataset_ids))
+    return {**result, 'unknown': unknown, 'ambiguous': ambiguous, 'tags': req.tags, 'assay': req.assay,
+            'datasets_searched': len(dataset_ids) if dataset_ids is not None else None}
 
+
+def run_live(ids, dataset_ids, limit, n_datasets, log_kind=None, filters=()):
+    """Search live for SPELL gene IDs, optionally within dataset_ids; returns query, genes and datasets."""
     sem = state['live']
     if not sem.acquire(timeout=30):
         raise HTTPException(503, 'search service busy, try again shortly')
     try:
-        result = search(state['comp'], ids, dataset_ids=dataset_ids, max_genes=req.limit, precision='float64')
+        result = search(state['comp'], ids, dataset_ids=dataset_ids, max_genes=limit, precision='float64')
     finally:
         sem.release()
 
-    hits = [(g, s) for g, s in zip(result.gene_ids, result.gene_scores) if g not in ids][:req.limit]
+    hits = [(g, s) for g, s in zip(result.gene_ids, result.gene_scores) if g not in ids][:limit]
     names = [state['comp'].gene_names[state['comp'].index_of_id[g]] for g in ids]
-    state['log'].record('multi' if len(ids) > 1 else 'single', names, log_filters(req.tags, req.assay, req.dataset_ids))
+    state['log'].record(log_kind or ('multi' if len(ids) > 1 else 'single'), names, list(filters))
     weights = result.dataset_weights
     if weights is None:                       # single-gene search: weights only order the datasets
         total = sum(result.raw_weights) or 1.0
         weights = [w / total * 100 for w in result.raw_weights]
-    dsets = list(zip(result.dataset_ids, weights))[:req.datasets]
+    dsets = list(zip(result.dataset_ids, weights))[:n_datasets]
     with db() as con:
         ginfo = gene_info(con, ids + [g for g, _ in hits])
         dinfo = dataset_info(con, [d for d, _ in dsets])
@@ -231,9 +248,7 @@ def live_search(req: SearchRequest):
         'query': [ginfo[i] for i in ids],
         'genes': [{**ginfo[g], 'score': s} for g, s in hits],
         'datasets': [{**dinfo[d], 'weight': w} for d, w in dsets],
-        'unknown': unknown, 'ambiguous': ambiguous, 'source': 'live',
-        'tags': req.tags, 'assay': req.assay,
-        'datasets_searched': len(dataset_ids) if dataset_ids is not None else None,
+        'source': 'live',
     }
 
 

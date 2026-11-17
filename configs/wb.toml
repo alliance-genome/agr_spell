@@ -1,0 +1,38 @@
+# spell-next config for WormBase, for raw directories made by tools/wb_import.py from a WormBase
+# SPELL release folder (TablesForSPELL_<release>). Copy to <raw data dir>/mod.toml.
+
+[mod]
+id = "WB"
+name = "WormBase"
+site_title = "SPELL next"
+organism = "nematode"
+contact = "help@wormbase.org"                 # TODO(Wen): confirm the help address
+examples = ["unc-54", "lin-12", "daf-2 daf-16 age-1"]
+listing_example = "unc-54 myo-3"
+
+[links]
+# Placeholders: {mod_id}, {systematic}, {standard}
+gene = "https://wormbase.org/species/all/gene/{mod_id}"
+
+[genes]
+# Written by tools/wb_import.py from gene_list.txt, systematic_to_common.txt and alias_to_systematic.txt;
+# each gene's species is the species of the datasets that measure it.
+file = "meta/genes.tsv"
+format = "gene_table"
+default_species = "Caenorhabditis elegans"
+
+[datasets]
+# Written by tools/wb_import.py from dataset_table_enriched.txt (listed datasets only).
+metadata = "meta/datasets.tsv"
+format = "dataset_table"
+# The "Method:" values in WormBase's dataset tags.
+assays = ["microarray", "RNAseq", "proteomics", "tiling array", "Single-Cell RNA-Seq", "Single-Nucleus RNA-Seq"]
+
+[go]
+obo = "meta/gene_ontology.obo"
+gaf = ["meta/gene_association.wb"]
+
+[build]
+# About 300,000 genes over 9 species: too many for a genes x genes precompute in memory, so
+# single-gene searches run live like multi-gene searches.
+precompute = false

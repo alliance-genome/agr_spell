@@ -63,6 +63,11 @@ DEFAULTS = {
         'gaf': ['meta/gene_association.sgd.gaf.gz'],
     },
     'updates': {},                      # {raw-relative path: download URL}, fetched by `spell update-refs`
+    'build': {
+        # Precompute every gene's single-gene result (instant answers). Needs memory for a genes x genes
+        # matrix, so very large MODs (e.g. WormBase's 300,000 genes) turn it off and search live instead.
+        'precompute': True,
+    },
 }
 
 
@@ -118,6 +123,8 @@ def validate(cfg):
             raise ConfigError('links.keyword may only use {%s}: %s' % ('}, {'.join(KEYWORD_LINK_FIELDS), err))
     if not isinstance(cfg['mod']['examples'], list):
         raise ConfigError('mod.examples must be a list of queries')
+    if not isinstance(cfg['build']['precompute'], bool):
+        raise ConfigError('build.precompute must be true or false')
     assays = cfg['datasets']['assays']
     if not isinstance(assays, list) or not all(isinstance(a, str) and a for a in assays):
         raise ConfigError('datasets.assays must be a list of assay names')

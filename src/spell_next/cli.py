@@ -103,9 +103,11 @@ def smoke_test(build_dir):
     if not s['datasets'] or not s['genes']:
         raise RuntimeError('build has %d datasets and %d genes' % (s['datasets'], s['genes']))
     db = sqlite3.connect(os.path.join(build_dir, 'spell.sqlite'))
-    gene, n = db.execute('SELECT gene_id, COUNT(*) FROM coexpression GROUP BY gene_id LIMIT 1').fetchone()
+    row = db.execute('SELECT gene_id, COUNT(*) FROM coexpression GROUP BY gene_id LIMIT 1').fetchone()
     db.close()
     comp = Compendium.load(os.path.join(build_dir, 'compendium.npz'))
+    # Without precomputed results, test with a gene measured in the first dataset.
+    gene = row[0] if row else comp.gene_ids[int(comp.datasets[0].gene_index[0])]
     result = search(comp, [gene], max_genes=5)
     if not result.dataset_ids:
         raise RuntimeError('a test search for gene %d found no datasets' % gene)

@@ -447,11 +447,17 @@ def run_build(raw_dir, out_dir, workers=None, limit=None, no_qc=False, centre=Fa
     comp.save(npz_path)
 
     gene_ids = comp.gene_ids[:limit] if limit else comp.gene_ids
-    print('precomputing %d genes with %d workers...' % (len(gene_ids), workers))
-    if per_gene:
+    db.execute("INSERT OR REPLACE INTO build_info VALUES ('precomputed', ?)",
+               ('1' if cfg['build']['precompute'] else '0',))
+    if not cfg['build']['precompute']:
+        print('precompute: off ([build] precompute = false); single-gene searches run live')
+    elif per_gene:
+        print('precomputing %d genes with %d workers...' % (len(gene_ids), workers))
         precompute_per_gene(db, npz_path, gene_ids, workers)
     else:
+        print('precomputing %d genes with %d workers...' % (len(gene_ids), workers))
         precompute(db, comp, npz_path, gene_ids, workers)
+    db.commit()
     db.execute('VACUUM')
     db.close()
     print('done in %.0fs: %s' % (time.time() - t0, db_path))

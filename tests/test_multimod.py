@@ -122,3 +122,36 @@ def test_bad_config_is_rejected(tmp_path):
     (tmp_path / 'mod.toml').write_text('[links]\ngene = "https://x.org/{sgdid}"\n')
     with pytest.raises(modconfig.ConfigError):
         modconfig.load(str(tmp_path))
+
+
+@pytest.fixture(scope='module')
+def live_client(tmp_path_factory):
+    """The toy MOD built with [build] precompute = false."""
+    from fastapi.testclient import TestClient
+
+    from spell_next import api
+    raw = make_toy_raw(tmp_path_factory.mktemp('raw_live'))
+    (raw / 'mod.toml').write_text((raw / 'mod.toml').read_text() + '\n[build]\nprecompute = false\n')
+    out = tmp_path_factory.mktemp('out_live')
+    subprocess.run([sys.executable, '-m', 'spell_next.build', str(raw), str(out), '--workers', '2'],
+                   check=True, capture_output=True, text=True)
+    saved = api.DATA_DIR, api.LOG_DIR
+    api.DATA_DIR, api.LOG_DIR = Path(out), str(tmp_path_factory.mktemp('logs_live'))
+    with TestClient(api.app) as c:
+        yield c, out
+    api.DATA_DIR, api.LOG_DIR = saved
+
+
+def test_without_precompute_single_gene_searches_run_live(build, live_client):
+    live, out = live_client
+    db = sqlite3.connect(os.path.join(out, 'spell.sqlite'))
+    assert db.execute('SELECT COUNT(*) FROM coexpression').fetchone()[0] == 0
+    a1 = live.get('/api/genes/lookup', params={'q': 'a-1'}).json()['genes'][0]['id']
+    got = live.get('/api/genes/%d/coexpression' % a1, params={'limit': 5}).json()
+    assert got['source'] == 'live'
+    pre = sqlite3.connect(os.path.join(build, 'spell.sqlite'))      # the same MOD, precomputed
+    want = pre.execute('SELECT hit_id, score FROM coexpression WHERE gene_id = ? AND rank <= 5 ORDER BY rank',
+                       (a1,)).fetchall()
+    assert [(g['id'], round(g['score'], 6)) for g in got['genes']] == [(h, round(s, 6)) for h, s in want]
+    via_search = live.post('/api/search', json={'genes': ['a-1'], 'limit': 5}).json()
+    assert [g['id'] for g in via_search['genes']] == [h for h, _ in want]
