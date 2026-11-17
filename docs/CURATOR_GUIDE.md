@@ -135,10 +135,18 @@ so validate warns: fix the file rather than relying on it.
    - **Without `--metadata`** it adds every file in `expression/` that isn't listed yet, with
      metadata from GEO and PubMed. `--tags`, `--assay` and `--value-type` set those columns for
      all of them; file names can be given to add only some.
+   - **Duplicates are checked first.** A file whose data is already in SPELL (identical values,
+     under any name) is refused, listed as `DUPLICATE`; use `--allow-duplicates` only if that is
+     really intended. Files with the same condition names or the same GEO series as an existing
+     dataset are listed as `note:` and added (a series split into several datasets is normal).
+     The first run reads every dataset (under a minute); after that only new files are read.
    - **Filled-in metadata is a draft.** GEO may link several papers (the first is used), and
      SGD often gives datasets split from one series their own titles. Check the new rows.
 4. **Check the new rows** in `raw/meta/datasets.tsv`: tags, assay, value_type, titles.
 5. **Validate**, then **rebuild** (section 6). Add many datasets and rebuild once.
+
+To check the datasets already in SPELL for duplicates, run `./spellctl find-duplicates sgd`. It
+lists groups with the same data, the same condition names, or the same GEO series.
 
 Adding by hand works too: put the ID and file name in `dataset_list.txt` (`./spellctl validate sgd`
 prints the next free ID) and a row in `datasets.tsv`.

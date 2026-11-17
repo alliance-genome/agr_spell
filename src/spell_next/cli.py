@@ -298,6 +298,94 @@ def cmd_migrate_metadata(args):
     return 0
 
 
+def _dataset_geo(p, cfg):
+    """{filename: GEO series} from the dataset table, or from file names where it has none."""
+    from spell_next.build import read_dataset_info
+    from spell_next.geo import geo_id_of
+
+    meta = read_dataset_info(p['raw'], cfg)
+    return lambda f: (meta.get(f) or {}).get('geo_id') or geo_id_of(f)
+
+
+def _fingerprint_inputs(p, listed, retired, workers):
+    """Fingerprints of listed and retired datasets: (name_to_index, [(label, path, fp)])."""
+    from spell_next import duplicates
+    from spell_next.compendium import read_gene_list
+
+    _, names = read_gene_list(os.path.join(p['raw'], 'gene_list.txt'))
+    name_to_index = {n: i for i, n in enumerate(names)}
+    items = []
+    for folder, entries, tag in ((os.path.join(p['raw'], 'expression'), listed, ''),
+                                 (os.path.join(p['raw'], 'retired', 'expression'), retired, 'retired ')):
+        for ds_id, f in entries:
+            if os.path.exists(os.path.join(folder, f)):
+                items.append(('%sdataset %d (%s)' % (tag, ds_id, f), os.path.join(folder, f)))
+    fps = duplicates.fingerprints(p['raw'], [path for _, path in items], name_to_index, workers)
+    return name_to_index, [(label, path, fps[path]) for label, path in items]
+
+
+def _report_duplicates(p, cfg, files, gse, listed, retired, workers):
+    """Print possible duplicates of the new files; return the new files whose data is already in SPELL."""
+    from spell_next import duplicates
+
+    print('\nChecking for duplicates (first run reads every dataset; later runs only new or changed files)...')
+    name_to_index, existing = _fingerprint_inputs(p, listed, retired, workers)
+    paths = [os.path.join(p['raw'], 'expression', f) for f in files]
+    fps = duplicates.fingerprints(p['raw'], paths, name_to_index, workers)
+    geo_existing = _dataset_geo(p, cfg)
+
+    def geo_of(label):
+        if label in gse:
+            return gse[label]
+        return geo_existing(label.rsplit('(', 1)[-1].rstrip(')'))
+
+    found = duplicates.compare([(f, path, fps[path]) for f, path in zip(files, paths)], existing, geo_of)
+    same_data = []
+    for f, hits in found.items():
+        for kind, other in hits:
+            serious = kind == 'same data' and not other.startswith('retired ')
+            print('  %s %s: %s as %s' % ('DUPLICATE' if serious else 'note:', f, kind, other))
+        if any(k == 'same data' and not o.startswith('retired ') for k, o in hits):
+            same_data.append(f)
+    if not found:
+        print('  none found')
+    return same_data
+
+
+def cmd_find_duplicates(args):
+    """Report datasets in SPELL that share data, condition names or a GEO series."""
+    from spell_next import duplicates
+    from spell_next.compendium import read_dataset_list
+
+    p = paths(args.root)
+    cfg = modconfig.load(p['raw'])
+    listed = read_dataset_list(os.path.join(p['raw'], 'dataset_list.txt'))
+    seen, unique = set(), []
+    for ds_id, f in listed:                   # a file listed twice is reported by validate already
+        if f not in seen:
+            seen.add(f)
+            unique.append((ds_id, f))
+    print('Fingerprinting %d datasets (cached after the first run)...' % len(unique))
+    _, items = _fingerprint_inputs(p, unique, [], args.workers)
+    geo_of = _dataset_geo(p, cfg)
+    found = duplicates.groups(items, lambda label: geo_of(label.rsplit('(', 1)[-1].rstrip(')')))
+    reported = set()
+    for kind, labels in found:
+        key = frozenset(labels)
+        if key in reported:                   # e.g. same data implies same conditions: report once
+            continue
+        reported.add(key)
+        print('\n%s (%d datasets):' % (kind, len(labels)))
+        for label in labels:
+            print('  ' + label)
+    if not reported:
+        print('No duplicates found.')
+    print('\n"same data" means identical values; "same conditions" the same column names (often the same '
+          'experiment processed differently); "same GEO series" can be legitimate (one series split into '
+          'several datasets).')
+    return 0
+
+
 FETCHED = ('title', 'pubmed_id', 'description', 'first_author', 'authors', 'journal', 'year', 'assay')
 
 
@@ -416,9 +504,14 @@ def cmd_add_datasets(args):
                                                    r['pubmed_id'], r['assay'], r['title'][:60]))
     for n in notes:
         print('  note: ' + n)
+    same_data = _report_duplicates(p, cfg, files, gse, listed, retired, args.workers)
     if args.dry_run:
         print('\nDry run: nothing written.')
         return 0
+    if same_data and not args.allow_duplicates:
+        print('\nNothing added: %d file(s) hold the same data as a dataset already in SPELL (or earlier in this '
+              'batch). Remove them, or rerun with --allow-duplicates to add them anyway.' % len(same_data))
+        return 1
     _backup(list_path)
     _backup(meta_path)
     with open(list_path, 'a') as fh:
@@ -512,6 +605,12 @@ def main(argv=None):
     sp.add_argument('--tags', help='tags for all of them, |-separated')
     sp.add_argument('--dry-run', action='store_true', help='show what would be added, write nothing')
     sp.add_argument('--no-fetch', action='store_true', help='do not look up GEO/PubMed (rows get file names only)')
+    sp.add_argument('--allow-duplicates', action='store_true',
+                    help='add files even if their data is already in SPELL')
+    sp.add_argument('--workers', type=int)
+    sp = add('find-duplicates', cmd_find_duplicates,
+             'list datasets in SPELL that share data, condition names or a GEO series')
+    sp.add_argument('--workers', type=int)
 
     args = ap.parse_args(argv)
     return args.func(args) or 0

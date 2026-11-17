@@ -8,6 +8,7 @@
 #   ./spellctl add-datasets MOD [--metadata TABLE] [FILE...] [--dry-run]
 #                                    list new files from raw/expression/ in dataset_list.txt and
 #                                    datasets.tsv (metadata from TABLE, GEO and PubMed); see the guide
+#   ./spellctl find-duplicates MOD   list datasets sharing data, condition names or a GEO series
 #   ./spellctl update MOD            fetch gene names and GO files ([updates] in mod.toml); rebuild if any
 #                                    changed. Runs in the foreground (cron runs it weekly; see README).
 #   ./spellctl rollback MOD [BUILD]  serve the previous (or given) build, restart
@@ -27,7 +28,7 @@ BUILD_CPUS=${SPELL_BUILD_CPUS:-3}          # leave a core for the running apps d
 BUILD_MEM=${SPELL_BUILD_MEM:-10g}
 COMPOSE=(docker compose --profile wb)
 
-usage() { sed -n '2,20p' "$SELF" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,21p' "$SELF" | sed 's/^# \{0,1\}//'; exit 1; }
 
 service_of() {
   case "$1" in
@@ -150,7 +151,9 @@ case "$cmd" in
         args+=("$1"); shift
       fi
     done
-    spell_run "$mod" add-datasets /srv/spell "${args[@]}" ;;
+    spell_run "$mod" add-datasets /srv/spell --workers "$BUILD_CPUS" "${args[@]}" ;;
+  find-duplicates)
+    spell_run "${1:?MOD}" find-duplicates /srv/spell --workers "$BUILD_CPUS" ;;
   migrate-metadata)
     spell_run "${1:?MOD}" migrate-metadata /srv/spell ;;
   start)

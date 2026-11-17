@@ -36,14 +36,23 @@ def fake_ncbi(tool, **params):
     raise AssertionError(tool)
 
 
+def shifted_copy(root, source, shift):
+    """The text of a toy PCL file with every value moved by shift: same genes and conditions, new data."""
+    lines = (root / 'raw' / 'expression' / source).read_text().splitlines()
+    out = lines[:2]
+    for line in lines[2:]:
+        f = line.split('\t')
+        out.append('\t'.join(f[:3] + ['%.4f' % (float(v) + shift) for v in f[3:]]))
+    return '\n'.join(out) + '\n'
+
+
 @pytest.fixture
 def root(tmp_path, monkeypatch):
     root = tmp_path / 'instance'
     assert cli.main(['init', str(root)]) == 0
     make_toy_raw(root / 'raw')
-    pcl = (root / 'raw' / 'expression' / 'A_set0.pcl').read_text()
-    for name in ('GSE1001.final.pcl', 'GSE1002_set0.pcl', 'local.pcl'):
-        (root / 'raw' / 'expression' / name).write_text(pcl)
+    for k, name in enumerate(('GSE1001.final.pcl', 'GSE1002_set0.pcl', 'local.pcl')):
+        (root / 'raw' / 'expression' / name).write_text(shifted_copy(root, 'A_set0.pcl', k + 1))
     CALLS.clear()
     monkeypatch.setattr(geo, '_post', fake_ncbi)
     monkeypatch.setattr(geo.metadata_for, '__defaults__', (fake_ncbi,))
@@ -108,6 +117,39 @@ def test_curators_metadata_table_is_used_as_given(root, tmp_path):
         ('Series two', 'growth', 'microarray', 'log2 ratio')           # GEO fills the blanks
     searched = ' '.join(str(c[2]) for c in CALLS if c[0] == 'esearch.fcgi')
     assert 'GSE1002' in searched and 'GSE1001' not in searched        # complete rows are not looked up
+
+
+def test_duplicate_data_is_refused_unless_allowed(root, capsys):
+    expr = root / 'raw' / 'expression'
+    (expr / 'GSE1003_copy.pcl').write_text((expr / 'A_set0.pcl').read_text())       # A_set0 again
+    assert cli.main(['add-datasets', str(root), 'GSE1003_copy.pcl', '--no-fetch']) == 1
+    out = capsys.readouterr().out
+    assert 'DUPLICATE GSE1003_copy.pcl: same data as dataset 1 (A_set0.pcl)' in out
+    assert 'GSE1003_copy.pcl' not in (root / 'raw' / 'dataset_list.txt').read_text()
+    assert cli.main(['add-datasets', str(root), 'GSE1003_copy.pcl', '--no-fetch', '--allow-duplicates']) == 0
+    assert 'GSE1003_copy.pcl' in (root / 'raw' / 'dataset_list.txt').read_text()
+
+
+def test_same_series_and_conditions_are_noted_not_refused(root, capsys):
+    # GSE1001.final.pcl has A_set0's conditions with different values; add it, then a second file of the series.
+    assert cli.main(['add-datasets', str(root), 'GSE1001.final.pcl', '--no-fetch']) == 0
+    out = capsys.readouterr().out
+    assert 'note: GSE1001.final.pcl: same conditions as dataset 1 (A_set0.pcl)' in out
+    (root / 'raw' / 'expression' / 'GSE1001_set2.pcl').write_text(
+        shifted_copy(root, 'A_set0.pcl', 9).replace('c0', 'zero'))
+    assert cli.main(['add-datasets', str(root), 'GSE1001_set2.pcl', '--no-fetch']) == 0
+    assert 'note: GSE1001_set2.pcl: same GEO series as dataset 5 (GSE1001.final.pcl)' in capsys.readouterr().out
+
+
+def test_find_duplicates_reports_groups(root, capsys):
+    expr = root / 'raw' / 'expression'
+    (expr / 'copy.pcl').write_text((expr / 'B_set1.pcl').read_text())
+    with open(root / 'raw' / 'dataset_list.txt', 'a') as fh:
+        fh.write('9\tcopy.pcl\n')
+    assert cli.main(['find-duplicates', str(root)]) == 0
+    out = capsys.readouterr().out
+    assert 'same data (2 datasets):' in out and 'dataset 9 (copy.pcl)' in out and 'dataset 4 (B_set1.pcl)' in out
+    assert (root / 'raw' / '.dataset_fingerprints.json').exists()          # cached for the next run
 
 
 def test_ids_skip_retired_datasets(root):
