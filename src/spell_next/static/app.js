@@ -282,7 +282,7 @@ function showHome() {
     <p>To use SPELL, simply enter a set of ${esc(m.species || m.organism || '')} gene names (defined by
       ${esc(m.id)}) into the search box above and click "Search". Systematic names, standard names, aliases and
       ${esc(m.id)} gene IDs all work.</p>
-    <p>Examples:${m.examples.map((e) => `<a href="#/search/${encodeURIComponent(e)}">${esc(e)}</a>`).join(' · ')}</p>
+    <p>Examples: ${m.examples.map((e) => `<a href="#/search/${encodeURIComponent(e)}">${esc(e)}</a>`).join(' · ')}</p>
     <p class="sub">To see the expression of genes without a co-expression search, use a listing${listing ?
       `, e.g. <a href="#/expression/${encodeURIComponent(listing)}">${esc(listing)}</a>` : ''}.
       Browse or filter all datasets by topic on the <a href="#/datasets">Datasets</a> page.</p>
