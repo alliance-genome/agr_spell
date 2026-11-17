@@ -12,6 +12,7 @@ raw/meta/datasets.tsv, then `spell validate ROOT` and `spell rebuild ROOT`. Gene
 and GO files listed under [updates] in mod.toml are refreshed by `spell update-refs ROOT`.
 """
 import argparse
+import io
 import os
 import re
 import shutil
@@ -297,6 +298,153 @@ def cmd_migrate_metadata(args):
     return 0
 
 
+FETCHED = ('title', 'pubmed_id', 'description', 'first_author', 'authors', 'journal', 'year', 'assay')
+
+
+def read_metadata_table(path):
+    """A curator's metadata table (tab- or comma-separated, header row with a filename column):
+    {filename: {column: value}}, columns lower-cased."""
+    import csv
+
+    with open(path, newline='', encoding='utf-8-sig', errors='replace') as fh:
+        text = fh.read()
+    delimiter = '\t' if '\t' in text.split('\n', 1)[0] else ','
+    out = {}
+    for row in csv.DictReader(io.StringIO(text), delimiter=delimiter):
+        row = {(k or '').strip().lower(): re.sub(r'[\t\r\n]+', ' ', (v or '')).strip() for k, v in row.items()}
+        name = os.path.basename(row.get('filename') or '')
+        if name:
+            out[name] = row
+    if not out:
+        raise ValueError('no rows with a filename column')
+    return out
+
+
+def _backup(path):
+    if os.path.exists(path):
+        shutil.copy2(path, '%s.bak-%s' % (path, time.strftime('%Y%m%d-%H%M%S')))
+
+
+def cmd_add_datasets(args):
+    """List new expression files in dataset_list.txt and datasets.tsv. Metadata comes from --metadata (a
+    curator's table) where given, and from GEO and PubMed for whatever that leaves blank."""
+    import csv
+
+    from spell_next import geo
+    from spell_next.compendium import read_dataset_list
+
+    p = paths(args.root)
+    cfg = modconfig.load(p['raw'])
+    if cfg['datasets']['format'] != 'dataset_table' or not cfg['datasets']['metadata']:
+        print('add-datasets needs a dataset table ([datasets] format = "dataset_table"); '
+              'run spell migrate-metadata first.')
+        return 1
+    list_path = os.path.join(p['raw'], 'dataset_list.txt')
+    meta_path = os.path.join(p['raw'], cfg['datasets']['metadata'])
+    expr = os.path.join(p['raw'], 'expression')
+    listed = read_dataset_list(list_path) if os.path.exists(list_path) else []
+    retired_path = os.path.join(p['raw'], 'retired', 'dataset_list.txt')
+    retired = read_dataset_list(retired_path) if os.path.exists(retired_path) else []
+    listed_files = {f for _, f in listed}
+
+    supplied = {}
+    if args.metadata:
+        try:
+            supplied = read_metadata_table(args.metadata)
+        except (OSError, ValueError) as err:
+            print('Cannot read %s: %s' % (args.metadata, err))
+            return 1
+    if args.files:
+        files = [os.path.basename(f) for f in args.files]
+    elif supplied:                              # the files the metadata table describes
+        files = list(supplied)
+    else:                                       # every expression file not yet listed
+        files = sorted(f for f in os.listdir(expr) if not f.endswith('.sinfo') and not f.startswith('.')
+                       and f not in listed_files)
+    problems = [f + ': not in raw/expression/' for f in files if not os.path.exists(os.path.join(expr, f))]
+    problems += [f + ': already in dataset_list.txt' for f in files if f in listed_files]
+    if problems:
+        print('Nothing added:\n  ' + '\n  '.join(problems))
+        return 1
+    if not files:
+        print('No new files in raw/expression/: every file there is already listed.')
+        return 0
+
+    gse = {f: (supplied.get(f) or {}).get('geo_id') or geo.geo_id_of(f) for f in files}
+    # Look up only datasets the curator's table leaves incomplete.
+    lookup = {g for f, g in gse.items() if g and any(not (supplied.get(f) or {}).get(c) for c in FETCHED)}
+    meta = {}
+    if not args.no_fetch and lookup:
+        print('Fetching metadata for %d GEO series from NCBI...' % len(lookup))
+        try:
+            meta = geo.metadata_for(sorted(lookup))
+        except geo.NCBIError as err:
+            print('NCBI lookup failed (%s); nothing added. Retry, or use --no-fetch to add rows without '
+                  'metadata.' % err)
+            return 1
+
+    with open(meta_path, newline='', encoding='utf-8', errors='replace') as fh:
+        cols = next(csv.reader(fh, delimiter='\t'), None) or []
+    header = list(cols)
+    for c in ('filename', 'geo_id', 'pubmed_id', 'title', 'description', 'first_author', 'authors', 'journal',
+              'year', 'tags', 'assay', 'value_type'):
+        if c not in cols:
+            cols.append(c)
+    next_id = max([i for i, _ in listed + retired], default=0) + 1
+    rows, lines, notes = [], [], []
+    for k, f in enumerate(files):
+        m = dict(meta.get(gse[f]) or {})
+        found = bool(m) or gse[f] not in lookup
+        m.pop('gdstype', None)
+        m.update(filename=f, geo_id=gse[f] or '', tags=args.tags or '',
+                 assay=args.assay or m.get('assay', ''), value_type=args.value_type or '')
+        m.update({c: v for c, v in (supplied.get(f) or {}).items() if v})    # the curator's values win
+        rows.append({c: re.sub(r'[\t\r\n]+', ' ', str(m.get(c) or '')) for c in cols})
+        lines.append('%d\t%s\n' % (next_id + k, f))
+        if not gse[f]:
+            notes.append('%s: no GSE ID in the file name, so no metadata was fetched' % f)
+        elif not found and not args.no_fetch:
+            notes.append('%s: %s not found in GEO' % (f, gse[f]))
+        elif not m.get('pubmed_id'):
+            notes.append('%s: GEO lists no PubMed record; title is the GEO series title' % f)
+        if not rows[-1]['assay']:
+            notes.append('%s: assay unknown; set it in %s' % (f, cfg['datasets']['metadata']))
+
+    print('\n%-6s %-34s %-11s %-10s %-11s %s' % ('ID', 'file', 'GEO', 'PubMed', 'assay', 'title'))
+    for line, r in zip(lines, rows):
+        print('%-6s %-34s %-11s %-10s %-11s %s' % (line.split('\t')[0], r['filename'][:34], r['geo_id'],
+                                                   r['pubmed_id'], r['assay'], r['title'][:60]))
+    for n in notes:
+        print('  note: ' + n)
+    if args.dry_run:
+        print('\nDry run: nothing written.')
+        return 0
+    _backup(list_path)
+    _backup(meta_path)
+    with open(list_path, 'a') as fh:
+        fh.writelines(lines)
+    if header != cols[:len(header)] or len(header) < len(cols):
+        # New columns: rewrite the table with the full header, keeping every existing row.
+        with open(meta_path, newline='', encoding='utf-8', errors='replace') as fh:
+            old = list(csv.DictReader(fh, delimiter='\t'))
+        with open(meta_path, 'w', newline='', encoding='utf-8') as fh:
+            w = csv.DictWriter(fh, cols, delimiter='\t', lineterminator='\n', restval='')
+            w.writeheader()
+            w.writerows(old + rows)
+    else:
+        with open(meta_path, 'rb') as fh:
+            fh.seek(-1, os.SEEK_END)
+            missing_newline = fh.read(1) != b'\n'
+        with open(meta_path, 'a', newline='', encoding='utf-8') as fh:
+            if missing_newline:
+                fh.write('\n')
+            csv.DictWriter(fh, cols, delimiter='\t', lineterminator='\n').writerows(rows)
+    print('\nAdded %d datasets (IDs %d-%d) to dataset_list.txt and %s (backups kept as *.bak-*).'
+          % (len(files), next_id, next_id + len(files) - 1, cfg['datasets']['metadata']))
+    print('Next: check the new rows (add tags; set value_type for RNA-seq), then validate and rebuild.')
+    return 0
+
+
 def cmd_update_refs(args):
     """Fetch the reference files listed under [updates]; exit 0 if any changed, 3 if none did, 1 on failure."""
     from spell_next import refs
@@ -353,6 +501,17 @@ def main(argv=None):
     sp.add_argument('--port', type=int, default=8000)
     add('migrate-metadata', cmd_migrate_metadata, 'convert the old SPELL metadata export into meta/datasets.tsv')
     add('update-refs', cmd_update_refs, 'download the reference files listed under [updates] in raw/mod.toml')
+    sp = add('add-datasets', cmd_add_datasets,
+             'add new expression files to the dataset lists, with metadata from GEO and PubMed')
+    sp.add_argument('files', nargs='*', help='files in raw/expression/ (default: those in --metadata, else '
+                                             'every file not yet listed)')
+    sp.add_argument('--metadata', help='table of the new datasets (filename plus any datasets.tsv columns); '
+                                       'its values are used as given, GEO/PubMed fill blanks')
+    sp.add_argument('--assay', help='assay for all of them (default: from GEO, e.g. microarray or RNA-seq)')
+    sp.add_argument('--value-type', help='value_type for all of them, e.g. "log2 TMM CPM"')
+    sp.add_argument('--tags', help='tags for all of them, |-separated')
+    sp.add_argument('--dry-run', action='store_true', help='show what would be added, write nothing')
+    sp.add_argument('--no-fetch', action='store_true', help='do not look up GEO/PubMed (rows get file names only)')
 
     args = ap.parse_args(argv)
     return args.func(args) or 0

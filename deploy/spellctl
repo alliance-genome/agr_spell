@@ -5,6 +5,9 @@
 #   ./spellctl rebuild MOD [--wait]  validate, build, switch to the new build, restart MOD's app.
 #                                    Runs in the background (safe to log out); --wait stays attached.
 #   ./spellctl rebuild-log MOD       follow the running (or show the last) rebuild's log
+#   ./spellctl add-datasets MOD [--metadata TABLE] [FILE...] [--dry-run]
+#                                    list new files from raw/expression/ in dataset_list.txt and
+#                                    datasets.tsv (metadata from TABLE, GEO and PubMed); see the guide
 #   ./spellctl update MOD            fetch gene names and GO files ([updates] in mod.toml); rebuild if any
 #                                    changed. Runs in the foreground (cron runs it weekly; see README).
 #   ./spellctl rollback MOD [BUILD]  serve the previous (or given) build, restart
@@ -24,7 +27,7 @@ BUILD_CPUS=${SPELL_BUILD_CPUS:-3}          # leave a core for the running apps d
 BUILD_MEM=${SPELL_BUILD_MEM:-10g}
 COMPOSE=(docker compose --profile wb)
 
-usage() { sed -n '2,17p' "$SELF" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,20p' "$SELF" | sed 's/^# \{0,1\}//'; exit 1; }
 
 service_of() {
   case "$1" in
@@ -131,6 +134,23 @@ case "$cmd" in
     if [ -f "$ulog" ]; then
       echo "Last reference update: $(grep '^spellctl: ' "$ulog" | tail -2 | tr '\n' ' ')"
     fi ;;
+  add-datasets)
+    mod=${1:?MOD}; shift; service_of "$mod" >/dev/null
+    # The command runs in a container that sees $DATA_ROOT/$mod as /srv/spell: translate --metadata paths.
+    args=(); base=$(realpath "$DATA_ROOT/$mod")
+    while [ $# -gt 0 ]; do
+      if [ "$1" = "--metadata" ] && [ $# -gt 1 ]; then
+        table=$(realpath -e "$2") || { echo "spellctl: $2 not found" >&2; exit 1; }
+        case "$table" in
+          "$base"/*) args+=(--metadata "/srv/spell/${table#"$base"/}") ;;
+          *) echo "spellctl: put the metadata table under $DATA_ROOT/$mod (e.g. raw/new_datasets.csv)" >&2; exit 1 ;;
+        esac
+        shift 2
+      else
+        args+=("$1"); shift
+      fi
+    done
+    spell_run "$mod" add-datasets /srv/spell "${args[@]}" ;;
   migrate-metadata)
     spell_run "${1:?MOD}" migrate-metadata /srv/spell ;;
   start)

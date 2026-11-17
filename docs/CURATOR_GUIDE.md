@@ -113,19 +113,35 @@ If a file is not on a log scale, the build applies log2 (or log2(x + 1)) itself 
 says so. For RNA-seq that is not good enough (raw counts are not normalised for library size),
 so validate warns: fix the file rather than relying on it.
 
-### 3.3 Step by step
+### 3.3 Step by step: `spellctl add-datasets`
 
-1. **Copy the file** to `/srv/spell/sgd/raw/expression/`. Use the GEO series in the name, e.g.
-   `GSE123456.final.pcl`.
-2. **Pick a dataset ID.** `./spellctl validate sgd` prints the next free one ("Next free dataset
-   ID"). Never reuse an ID, including IDs of retired datasets.
-3. **Add a line to `raw/dataset_list.txt`**: the ID, a tab, the file name.
+1. **Copy the expression files** to `/srv/spell/sgd/raw/expression/`. Put the GEO series in the
+   name, e.g. `GSE123456.final.pcl`.
+2. **Optionally, prepare a metadata table** for them and put it under `/srv/spell/sgd/`, e.g.
+   `/srv/spell/sgd/raw/new_datasets.csv`. Comma- or tab-separated, with a header row: `filename`
+   plus any `datasets.tsv` columns (section 4). Typically `filename, geo_id, pubmed_id, title,
+   description, first_author, authors, journal, year, tags, assay, value_type`.
+3. **Preview**, then add:
+   ```bash
+   ./spellctl add-datasets sgd --metadata /srv/spell/sgd/raw/new_datasets.csv --dry-run
+   ./spellctl add-datasets sgd --metadata /srv/spell/sgd/raw/new_datasets.csv
    ```
-   3301	GSE123456.final.pcl
-   ```
-4. **Add a row to `raw/meta/datasets.tsv`** (see section 4 for the columns). At least
-   `filename`, `geo_id`, `title`, `tags` and `assay`; for RNA-seq also `value_type`.
-5. **Validate**, then **rebuild** (section 6). Add several datasets and rebuild once.
+   For each file it assigns the next free dataset ID (never reusing a retired one), appends
+   a line to `dataset_list.txt` and a row to `datasets.tsv`, and keeps backups of both
+   (`*.bak-<date>`).
+   - **Your table's values are used as given.** Anything it leaves blank (title, PubMed ID,
+     authors, journal, year, abstract, assay) is filled from GEO and PubMed, using the GSE ID in
+     the table or the file name. Datasets your table completes are not looked up at all.
+   - **Without `--metadata`** it adds every file in `expression/` that isn't listed yet, with
+     metadata from GEO and PubMed. `--tags`, `--assay` and `--value-type` set those columns for
+     all of them; file names can be given to add only some.
+   - **Filled-in metadata is a draft.** GEO may link several papers (the first is used), and
+     SGD often gives datasets split from one series their own titles. Check the new rows.
+4. **Check the new rows** in `raw/meta/datasets.tsv`: tags, assay, value_type, titles.
+5. **Validate**, then **rebuild** (section 6). Add many datasets and rebuild once.
+
+Adding by hand works too: put the ID and file name in `dataset_list.txt` (`./spellctl validate sgd`
+prints the next free ID) and a row in `datasets.tsv`.
 
 ## 4. Editing dataset metadata and tags
 

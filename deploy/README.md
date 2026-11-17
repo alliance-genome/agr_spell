@@ -45,6 +45,9 @@ ssh -i agr-sgd-dev-ec2.pem -L 8001:localhost:8001 ubuntu@<instance>
 
 ### Adding a dataset
 
+`./spellctl add-datasets sgd [--metadata TABLE]` does steps 2 and 3 below, filling metadata from
+a curator's table and from GEO/PubMed; see `docs/CURATOR_GUIDE.md`.
+
 All of a MOD's inputs live under `/srv/spell/<mod>/raw/` (SGD shown; use `wb` for WormBase).
 
 1. **Copy the expression file** to `raw/expression/`:
