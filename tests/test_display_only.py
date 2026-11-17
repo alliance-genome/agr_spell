@@ -56,6 +56,7 @@ def test_display_only_dataset_is_listed_with_links(client):
     assert c.get('/api/datasets/1001/download').status_code == 404
     info = c.get('/api/info').json()
     assert (info['datasets'], info['datasets_display_only']) == (4, 1)
+    assert (info['geo_series'], info['publications']) == (4, 0)       # display-only GSE77 is not counted
 
 
 def test_display_only_datasets_are_never_searched(client):

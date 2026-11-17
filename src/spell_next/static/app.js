@@ -275,14 +275,27 @@ function showHome() {
   const listing = m.listing_example || '';
   app.innerHTML = `
     <h1>Find genes co-expressed with your query</h1>
-    <p class="sub">Enter one gene for precomputed results, or several genes to search live for genes
-      that share their expression pattern across ${esc(m.organism || '')} expression datasets from ${esc(m.name)}.</p>
-    <p>Examples: ${m.examples.map((e) => `<a href="#/search/${encodeURIComponent(e)}">${esc(e)}</a>`).join(' · ')}</p>
+    <p>SPELL (Serial Pattern of Expression Levels Locator) is a query-driven search engine for large gene
+      expression microarray and RNA-seq compendia. Given a small set of query genes, SPELL identifies which
+      datasets are most informative for these genes, then within those datasets additional genes are identified
+      with expression profiles most similar to the query set.<span id="home-counts"></span></p>
+    <p>To use SPELL, simply enter a set of ${esc(m.species || m.organism || '')} gene names (defined by
+      ${esc(m.id)}) into the search box above and click "Search". Systematic names, standard names, aliases and
+      ${esc(m.id)} gene IDs all work.</p>
+    <p>Examples:${m.examples.map((e) => `<a href="#/search/${encodeURIComponent(e)}">${esc(e)}</a>`).join(' · ')}</p>
     <p class="sub">To see the expression of genes without a co-expression search, use a listing${listing ?
       `, e.g. <a href="#/expression/${encodeURIComponent(listing)}">${esc(listing)}</a>` : ''}.
       Browse or filter all datasets by topic on the <a href="#/datasets">Datasets</a> page.</p>
     <p class="sub">Prototype rebuilt from SPELL. Scores use corrected correlation arithmetic, so they can differ
       from the original SPELL site.</p>`;
+  api('/api/info').then((i) => {
+    const box = document.getElementById('home-counts');
+    if (!box || !i.datasets) return;
+    const n = (x) => Number(x || 0).toLocaleString();
+    box.textContent = ` This instance of SPELL currently contains ${n(i.datasets)} datasets representing
+      ${n(i.conditions)} total samples from ${n(i.publications)} published studies (${n(i.geo_series)} GEO
+      series).`.replace(/\s+/g, ' ');
+  }).catch(() => {});
 }
 
 async function showSearch(query, filter = NO_FILTER) {

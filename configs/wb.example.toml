@@ -7,6 +7,7 @@ id = "WB"
 name = "WormBase"
 site_title = "SPELL next"
 organism = "nematode"
+species = "C. elegans and other nematode"
 contact = "help@wormbase.org"                 # TODO: confirm the help address
 examples = ["unc-54", "lin-12", "daf-2 daf-16 age-1"]   # TODO: pick representative queries
 listing_example = "unc-54 myo-3"              # TODO

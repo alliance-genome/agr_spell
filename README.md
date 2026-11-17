@@ -74,7 +74,7 @@ SGD defaults apply. Templates: `configs/sgd.toml`, `configs/wb.example.toml`.
 
 | Section | What it sets |
 | --- | --- |
-| `[mod]` | ID, name, organism, contact, example queries shown on the home page |
+| `[mod]` | ID, name, organism, species (home page wording), contact, example queries shown on the home page |
 | `[links]` | Gene page URL template: `{mod_id}`, `{systematic}`, `{standard}` |
 | `[genes]` | Gene names file: `sgd_features` (SGD_features.tab) or `gene_table` |
 | `[datasets]` | Dataset metadata: `spell_dump` (old SPELL export) or `dataset_table` |

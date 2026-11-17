@@ -359,13 +359,18 @@ def info():
             if 'dataset_qc' in has else {}
         flagged = con.execute("SELECT COUNT(*) FROM dataset_qc WHERE warnings != ''").fetchone()[0] \
             if 'dataset_qc' in has else 0
-        searched = '(SELECT has_metadata, %s FROM datasets) WHERE display_only = 0' % state['assay_cols']
+        searched = ('(SELECT id, has_metadata, num_conds, %s FROM datasets) WHERE display_only = 0'
+                    % state['assay_cols'])
         return {
             'datasets': con.execute('SELECT COUNT(*) FROM ' + searched).fetchone()[0],
             'datasets_with_metadata': con.execute('SELECT SUM(has_metadata) FROM ' + searched).fetchone()[0],
             'datasets_display_only': con.execute('SELECT COUNT(*) FROM (SELECT %s FROM datasets) WHERE display_only = 1'
                                                  % state['assay_cols']).fetchone()[0],
-            'conditions': con.execute('SELECT SUM(num_conds) FROM datasets').fetchone()[0],
+            'conditions': con.execute('SELECT SUM(num_conds) FROM ' + searched).fetchone()[0],
+            'geo_series': con.execute("SELECT COUNT(DISTINCT geo_id) FROM datasets WHERE geo_id != '' AND id IN "
+                                      '(SELECT id FROM ' + searched + ')').fetchone()[0],
+            'publications': con.execute('SELECT COUNT(DISTINCT pubmed_id) FROM datasets WHERE pubmed_id AND id IN '
+                                        '(SELECT id FROM ' + searched + ')').fetchone()[0],
             'genes': con.execute('SELECT COUNT(*) FROM genes').fetchone()[0],
             'qc_scales': qc,
             'qc_flagged': flagged,

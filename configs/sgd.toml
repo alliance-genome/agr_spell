@@ -6,6 +6,7 @@ id = "SGD"
 name = "Saccharomyces Genome Database"
 site_title = "SPELL next"
 organism = "yeast"
+species = "S. cerevisiae"           # home page: "enter a set of S. cerevisiae gene names"
 contact = "sgd-helpdesk@lists.stanford.edu"
 examples = ["ACT1", "GAL1", "HSP104", "RPL3 RPL4A RPS2 RPS3", "CDC28 CLN1 CLN2 CLB5 CLB6"]
 listing_example = "GAL1 GAL7 GAL10"
