@@ -81,13 +81,19 @@ def dataset_info(con, ids):
 
 
 def resolve(con, names):
-    """Resolve gene names to SPELL gene IDs: systematic and standard names first, then aliases."""
+    """Resolve gene names to SPELL gene IDs: systematic and standard names first, then aliases, then the MOD's
+    gene ID (S000001855 or SGD:S000001855)."""
     resolved, unknown, ambiguous = [], [], []
     for name in names:
         rows = con.execute('SELECT DISTINCT gene_id, kind FROM gene_names WHERE name = ?',
                            (name.upper(),)).fetchall()
         exact = [r['gene_id'] for r in rows if r['kind'] != 'alias']
         ids = exact or sorted({r['gene_id'] for r in rows})
+        if not ids:
+            prefix, _, mod_id = name.rpartition(':')
+            if not prefix or prefix.isalpha():
+                ids = [r['id'] for r in con.execute('SELECT id FROM genes WHERE mod_id = ? COLLATE NOCASE',
+                                                    (mod_id,))]
         if len(ids) == 1:
             if ids[0] not in resolved:
                 resolved.append(ids[0])

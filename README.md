@@ -118,7 +118,7 @@ for every gene. Multi-gene searches run live (at most 4 at a time).
 
 | Endpoint | Purpose |
 | --- | --- |
-| `GET /api/genes/lookup?q=ACT1 GAL1` | Resolve systematic, standard or alias names |
+| `GET /api/genes/lookup?q=ACT1 GAL1` | Resolve systematic, standard or alias names, or MOD gene IDs (`S000001855`, `SGD:S000001855`) |
 | `GET /api/genes/{id}/coexpression` | Precomputed single-gene result |
 | `POST /api/search` `{"genes": [...]}` | Live multi-gene search |
 | `GET /api/datasets/{id}` | Dataset metadata and conditions |

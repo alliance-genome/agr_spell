@@ -65,6 +65,12 @@ def test_go_enrichment_uses_the_species_background(client):
     assert body['terms'][0]['name'] == 'beta module' and body['terms'][0]['list_count'] == 4
 
 
+def test_lookup_accepts_mod_gene_ids_with_or_without_prefix(client):
+    body = client.get('/api/genes/lookup', params={'q': 'MODB3 modA2 TM:MODA4 x:y:MODA1 MODA99'}).json()
+    assert [g['systematic'] for g in body['genes']] == ['B3', 'A2', 'A4']
+    assert body['unknown'] == ['x:y:MODA1', 'MODA99']
+
+
 def test_aliases_and_dataset_table_metadata(client):
     assert client.get('/api/genes/lookup', params={'q': 'b3-alias'}).json()['genes'][0]['systematic'] == 'B3'
     datasets = {d['geo_id']: d for d in client.get('/api/datasets').json()}
