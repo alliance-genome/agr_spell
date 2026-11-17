@@ -127,7 +127,7 @@ def validate(raw_dir, workers=None):
         report.add('error', 'dataset_list.txt', 'missing')
         return report
     entries = read_dataset_list(ds_path)
-    report.next_dataset_id = max((i for i, _ in entries), default=0) + 1
+    report.next_dataset_id = max([i for i, _ in entries] + _display_only_ids(raw_dir, cfg), default=0) + 1
     seen_ids, seen_files, unique = set(), {}, []
     for ds_id, fname in entries:
         if ds_id in seen_ids:
@@ -155,6 +155,15 @@ def validate(raw_dir, workers=None):
 
     _check_metadata(report, raw_dir, cfg, gene_names, [f for _, f in unique])
     return report
+
+
+def _display_only_ids(raw_dir, cfg):
+    from spell_next.build import read_dataset_info   # avoids a circular import
+    try:
+        return [m['dataset_id'] for m in read_dataset_info(raw_dir, cfg).values()
+                if m.get('display_only') and m.get('dataset_id') is not None]
+    except (OSError, ValueError):
+        return []
 
 
 def _check_keywords(report, raw_dir, cfg, meta, filenames):
@@ -240,7 +249,17 @@ def _check_metadata(report, raw_dir, cfg, gene_names, filenames):
                    % (len(missing), ', '.join(missing[:5]), ' …' if len(missing) > 5 else ''))
     _check_assays(report, cfg, meta, filenames)
     _check_keywords(report, raw_dir, cfg, meta, filenames)
-    extra = sorted(set(meta) - set(filenames))
+    display = {f: m for f, m in meta.items() if m.get('display_only')}
+    listed_ids = {d['dataset_id'] for d in report.datasets}
+    for f, m in sorted(display.items()):
+        if f in filenames:
+            report.add('warning', f, 'marked display_only but listed in dataset_list.txt: it is searched')
+        elif m.get('dataset_id') is None:
+            report.add('warning', f, 'display-only dataset has no dataset_id: it is left out')
+        elif m['dataset_id'] in listed_ids:
+            report.add('warning', f, 'display-only dataset_id %d is used by a listed dataset: it is left out'
+                       % m['dataset_id'])
+    extra = sorted(set(meta) - set(filenames) - set(display))
     if extra:
         report.add('warning', cfg['datasets']['metadata'] or 'datasets',
                    '%d metadata rows name files not in dataset_list.txt: %s%s'

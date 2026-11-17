@@ -863,12 +863,23 @@ async function showAbout() {
     <h2>Data</h2>
     <dl class="meta">
       <dt>Expression datasets</dt><dd>${esc(i.datasets ?? '—')} (${esc(i.conditions ?? '—')} conditions), from
-        ${esc(MOD())} SPELL; ${esc(i.datasets_with_metadata ?? '—')} with publication details</dd>
+        ${esc(MOD())} SPELL; ${esc(i.datasets_with_metadata ?? '—')} with publication details${
+        i.datasets_display_only ? `; plus ${esc(i.datasets_display_only)} datasets shown for reference without ` +
+        'expression data' : ''}</dd>
       ${multiSpecies() ? `<dt>Species</dt><dd>${CONFIG.species.map(esc).join(', ')}</dd>` : ''}
       <dt>Genes</dt><dd>${esc(i.genes ?? '—')}; names, aliases and descriptions from ${esc(MOD())}</dd>
       <dt>Gene Ontology</dt><dd>${esc(v.go_ontology || '—')}</dd>
       <dt>GO annotations</dt><dd>${esc(MOD())}, ${esc(v.go_annotations || '—')}</dd>
     </dl>
+    ${i.precomputed ? `<h2>Downloads</h2>
+    <p>Precomputed single-gene results for every gene, as gzipped tab-separated files:</p>
+    <ul>
+      <li><a href="/api/downloads/coexpression_genes.tsv.gz" download>Top 100 co-expressed genes</a> of each gene
+        (query, rank, co-expressed gene, score)</li>
+      <li><a href="/api/downloads/coexpression_datasets.tsv.gz" download>Top 100 most informative datasets</a>
+        for each gene (query, rank, dataset, weight in percent)</li>
+    </ul>
+    <p class="sub">Each dataset's expression data can be downloaded from its dataset page.</p>` : ''}
     <h2>Credits</h2>
     <p>The original SPELL was developed by the Troyanskaya lab at Princeton University and the Hibbs lab at The
       Jackson Laboratory, and was run by SGD (spell.yeastgenome.org) and WormBase (spell.wormbase.org).
@@ -893,7 +904,9 @@ async function showDatasets(filter = NO_FILTER) {
   const current = () => ({ tags: [...selected], assay: assayFilter(), find: findText() });
   app.innerHTML = `
     <h1>Datasets</h1>
-    <p class="sub">${datasets.length} expression datasets. Pick tags to list matching datasets (a dataset
+    <p class="sub">${datasets.filter((d) => !d.display_only).length} expression datasets${
+      datasets.some((d) => d.display_only) ? `, plus ${datasets.filter((d) => d.display_only).length} shown for ` +
+      'reference only (marked display only)' : ''}. Pick tags to list matching datasets (a dataset
       matches if it carries any selected tag), then search genes within them.</p>
     <div class="tag-picker" id="ds-tags"></div>
     <div class="ds-tools">
@@ -917,7 +930,9 @@ async function showDatasets(filter = NO_FILTER) {
       { headerName: 'Dataset', field: 'title', flex: 2, minWidth: 280, getQuickFilterText: (c) => datasetText(c.data),
         cellRenderer: (c) => cell(
         `<div class="clamp1"><a href="#/dataset/${c.data.id}" title="${esc(c.value)}">${esc(c.value)}</a></div>
-         <span class="sub">${esc([c.data.first_author, c.data.year, c.data.journal].filter(Boolean).join(' · '))}</span>`) },
+         <span class="sub">${c.data.display_only ? '<span class="flag" title="No expression data in SPELL; not used ' +
+           'in searches">display only</span> ' : ''}${
+           esc([c.data.first_author, c.data.year, c.data.journal].filter(Boolean).join(' · '))}</span>`) },
       { headerName: 'GEO', field: 'geo_id', width: 120 },
       { headerName: 'PubMed', field: 'pubmed_id', width: 120, cellRenderer: (c) => cell(c.value ?
         `<a href="https://pubmed.ncbi.nlm.nih.gov/${c.value}/" target="_blank" rel="noopener">${c.value}</a>` : '') },
@@ -981,35 +996,41 @@ async function showDataset(id) {
     app.innerHTML = `<p class="notice">${esc(err.message)}</p>`;
     return;
   }
+  const extLink = (url, text) => `<a href="${esc(url)}" target="_blank" rel="noopener">${esc(text)} ↗</a>`;
   const links = [
-    d.geo_id && `<a href="https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=${esc(d.geo_id)}" target="_blank"
-      rel="noopener">${esc(d.geo_id)} ↗</a>`,
-    d.pubmed_id && `<a href="https://pubmed.ncbi.nlm.nih.gov/${d.pubmed_id}/" target="_blank"
-      rel="noopener">PubMed ${d.pubmed_id} ↗</a>`,
+    d.geo_id && extLink(`https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=${d.geo_id}`, d.geo_id),
+    d.pubmed_id && extLink(`https://pubmed.ncbi.nlm.nih.gov/${d.pubmed_id}/`, `PubMed ${d.pubmed_id}`),
+    ...(d.links || []).filter((l) => !(d.geo_id && l.url.includes(`acc=${d.geo_id}`)))
+      .map((l) => extLink(l.url, l.label)),
   ].filter(Boolean).join(' · ');
+  const display = Boolean(d.display_only);
+  const notSearched = display ? 'Shown for reference: SPELL has no expression data for this dataset, so it is not ' +
+    'used in searches.' : (d.num_conds < 5 ? `Only ${d.num_conds} condition${d.num_conds === 1 ? '' : 's'}: ` +
+    'datasets need at least 5 to be used in searches, so this one is listed but not searched.' : '');
   app.innerHTML = `
     <p><a href="javascript:history.back()">← Back</a></p>
     <h1>${esc(d.title)}</h1>
     <p class="sub">${esc(d.authors || d.first_author || '')}${d.journal ? ' · ' + esc(d.journal) : ''}
       ${d.year ? ' · ' + esc(d.year) : ''}</p>
     ${d.has_metadata ? '' : '<p class="notice">Publication details for this dataset are not yet loaded.</p>'}
+    ${notSearched ? `<p class="notice">${esc(notSearched)}</p>` : ''}
     <dl class="meta">
       <dt>Links</dt><dd>${links || '—'}</dd>
-      <dt>Conditions</dt><dd>${d.num_conds}</dd>
-      <dt>Genes measured</dt><dd>${d.num_genes}</dd>
+      ${display ? '' : `<dt>Conditions</dt><dd>${d.num_conds}</dd>
+      <dt>Genes measured</dt><dd>${d.num_genes}</dd>`}
       <dt>Assay</dt><dd>${d.assay ? `<a href="#/datasets?assay=${encodeURIComponent(d.assay)}">${esc(d.assay)}</a>`
         : '—'}</dd>
       ${d.value_type ? `<dt>Values</dt><dd>${esc(d.value_type)}</dd>` : ''}
       <dt>Tags</dt><dd id="ds-tag-list">${(d.tags || '').split('|').filter(Boolean).map((t) =>
         `<a href="#/datasets?tags=${encodeURIComponent(t)}">${esc(t)}</a>`).join(', ') || '—'}</dd>
       <dt>File</dt><dd>${esc(d.filename)}</dd>
-      <dt>Download</dt><dd><a href="/api/datasets/${d.id}/download" download>Expression data as searched
-        (tab-separated)</a></dd>
+      ${display ? '' : `<dt>Download</dt><dd><a href="/api/datasets/${d.id}/download" download>Expression data as
+        searched (tab-separated)</a></dd>`}
     </dl>
     ${d.qc ? qcSection(d.qc) : ''}
     ${d.description ? `<h2>Summary</h2><p>${esc(d.description)}</p>` : ''}
-    <h2>Conditions</h2>
-    <ol class="conds">${d.conditions.map((c) => `<li>${esc(c)}</li>`).join('')}</ol>`;
+    ${d.conditions.length ? `<h2>Conditions</h2>
+    <ol class="conds">${d.conditions.map((c) => `<li>${esc(c)}</li>`).join('')}</ol>` : ''}`;
   // Add each tag's definition and a link to its keyword page, when the keyword list provides them.
   allTags().then((all) => {
     const info = new Map(all.map((t) => [t.tag, t]));

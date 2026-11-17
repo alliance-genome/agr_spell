@@ -86,7 +86,8 @@ name used in the PCL files), `mod_id`, `standard`, `aliases` (`|`-separated),
 `geo_id`, `pubmed_id`, `title`, `description`, `first_author`, `authors`, `journal`,
 `year`, `tags` (`|`-separated), `assay` (one of `[datasets] assays`, by default
 `microarray` or `RNA-seq`) and `value_type` (what the values are, e.g. `log2 TMM CPM`,
-`log2 TPM`, `vst`, `log2 ratio`). An optional keyword list (`[datasets] keywords`, columns
+`log2 TPM`, `vst`, `log2 ratio`), and optionally `links` (`label <url> | label <url>`) and, for datasets
+shown without expression data, `display_only` (`yes`), `dataset_id` and `species`. An optional keyword list (`[datasets] keywords`, columns
 `display_name`, `category`, `description`, `format_name`) groups tags by category in the tag
 picker, shows definitions, links tags via `[links] keyword`, and lets `spell validate` flag
 tags not in the list. The site filters searches, listings and the dataset list

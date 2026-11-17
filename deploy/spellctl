@@ -55,11 +55,17 @@ rebuild_running() {
   [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null && cat "$pidfile"
 }
 
-# The rebuild itself (also what the detached job runs). Holds a lock so rebuilds of one MOD never overlap.
+# The rebuild itself (also what the detached job runs). A per-MOD lock refuses a second rebuild of the same
+# MOD; a shared lock makes rebuilds of different MODs take turns, since each build may use BUILD_MEM.
 do_rebuild() {
   local mod=$1 lock="$DATA_ROOT/$1/rebuild.lock"
   exec 9>"$lock"
   if ! flock -n 9; then echo "spellctl: another rebuild of $mod is running" >&2; return 1; fi
+  exec 8>"$DATA_ROOT/.build.lock"
+  if ! flock -n 8; then
+    echo "spellctl: rebuild of $mod waiting for another MOD's rebuild to finish ($(date '+%Y-%m-%d %H:%M:%S'))"
+    flock 8
+  fi
   echo "spellctl: rebuild of $mod started $(date '+%Y-%m-%d %H:%M:%S')"
   if spell_run "$mod" rebuild /srv/spell --workers "$BUILD_CPUS"; then
     "${COMPOSE[@]}" up -d "$(service_of "$mod")"

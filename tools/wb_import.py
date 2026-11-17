@@ -13,8 +13,9 @@ and RAW_DIR/meta/genes.tsv (gene_table format), datasets.tsv (dataset_table form
 gene_ontology.obo and gene_association.wb. mod.toml is not touched (start from configs/wb.toml).
 
 Dataset tags in the enriched table look like "Method: RNAseq|Species: Brugia malayi|Topic: diet":
-Method becomes the assay, Topic and "Tissue Specific" entries become tags, and Species gives each
-gene its species (the species of the datasets it is measured in). HTML in titles is removed.
+Method becomes the assay and Topic and "Tissue Specific" entries become tags. Each gene's species
+comes from WBGeneSpe.txt (WBGene ID, species) when the release has it, else from the species of the
+datasets measuring it. HTML in titles is removed.
 WormBase writes zero expression as log2(1e-10) = -33.2. Such values dominate correlations, so
 --zeros-as-missing writes them as empty cells (not measured) in the copied PCL files.
 Uses only the Python standard library, so it runs on the server without the spell-next image.
@@ -33,6 +34,23 @@ ZERO = -33.2  # WormBase writes log2(1e-10) = -33.219 for zero expression
 def clean(text):
     """Plain text from an HTML fragment (tags dropped, entities decoded, whitespace collapsed)."""
     return ' '.join(html.unescape(re.sub(r'<[^>]+>', ' ', text or '')).split())
+
+
+def links_of(field):
+    """Links from the enriched title field: 'Title <br> GEO Record: <a ...>GSE1</a> Platform: <a>GPL2</a>
+    <br> Lab Atlas: <a>...</a> <br>Download ...: <a>file.csv</a>' -> 'GEO Record GSE1 <url> | ...'."""
+    out = []
+    for section in re.split(r'<br\s*/?>', field or '', flags=re.I)[1:]:
+        prefix, pos = '', 0
+        for m in re.finditer(r'<a[^>]+href="([^"]+)"[^>]*>(.*?)</a>', section, flags=re.I | re.S):
+            before = clean(section[pos:m.start()]).strip(' :,')
+            if before:                          # a new label such as "GEO Record" or "Platform"
+                prefix = 'Download' if before.lower().startswith('download') else before
+            pos = m.end()
+            text = clean(m.group(2))
+            label = prefix or text if text.startswith(('http://', 'https://')) else ('%s %s' % (prefix, text)).strip()
+            out.append('%s <%s>' % (label.replace('|', '/').replace('<', '').replace('>', ''), m.group(1).strip()))
+    return ' | '.join(out)
 
 
 def parse_tags(field):
@@ -75,27 +93,33 @@ def main(src, raw, zeros_as_missing=False):
                 listed.append(parts[1])
     table = {r[2]: r for r in read_table(os.path.join(src, 'dataset_table_enriched.txt')) if len(r) >= 17}
 
-    # Datasets (only the listed ones: the others are display-only in WormBase's SPELL).
-    cols = ['filename', 'geo_id', 'pubmed_id', 'title', 'description', 'first_author', 'authors', 'journal',
-            'year', 'tags', 'assay', 'value_type']
+    # Datasets: the listed ones are searched; the other table rows are shown for reference only
+    # (display_only), e.g. single-cell datasets with no expression matrix.
+    cols = ['dataset_id', 'filename', 'geo_id', 'pubmed_id', 'title', 'description', 'first_author', 'authors',
+            'journal', 'year', 'tags', 'assay', 'value_type', 'species', 'display_only', 'links']
     species_of_dataset, assays, missing = {}, Counter(), []
+    listed_set = set(listed)
+    display = [n for n in table if n not in listed_set]
     with open(os.path.join(raw, 'meta', 'datasets.tsv'), 'w', newline='', encoding='utf-8') as fh:
         w = csv.writer(fh, delimiter='\t', lineterminator='\n')
         w.writerow(cols)
-        for name in listed:
+        for name in listed + display:
             r = table.get(name)
             if r is None:
                 missing.append(name)
-                w.writerow([name] + [''] * (len(cols) - 1))
+                w.writerow(['', name] + [''] * (len(cols) - 2))
                 continue
             method, species, topics = parse_tags(r[16])
             species_of_dataset[name] = species
-            assays[method] += 1
+            if name in listed_set:
+                assays[method] += 1
             geo = re.search(r'GEO Record:.*?\b(GSE\d+)\b', r[6])
             title = clean(r[12]) or clean(r[6].split('<br>')[0])
-            w.writerow([name, geo.group(1) if geo else '', r[1] if r[1].isdigit() else '', title,
-                        clean(r[7]), clean(r[10]), clean(r[11]), clean(r[13]), r[14] if r[14].isdigit() else '',
-                        '|'.join(dict.fromkeys(t.replace('|', '/') for t in topics)), method, ''])
+            w.writerow([r[0] if r[0].isdigit() else '', name, geo.group(1) if geo else '',
+                        r[1] if r[1].isdigit() else '', title, clean(r[7]), clean(r[10]), clean(r[11]),
+                        clean(r[13]), r[14] if r[14].isdigit() else '',
+                        '|'.join(dict.fromkeys(t.replace('|', '/') for t in topics)), method, '', species,
+                        '' if name in listed_set else 'yes', links_of(r[6])])
 
     # Expression files, and each gene's species from the datasets measuring it.
     gene_species = defaultdict(Counter)
@@ -140,7 +164,15 @@ def main(src, raw, zeros_as_missing=False):
             # Skip cross-reference strings such as CAEEL/WormBase=WBGene.../UniProtKB=...
             if len(f) >= 3 and f[1] and f[1] != common.get(f[2]) and '=' not in f[1]:
                 aliases[f[2]][f[1]] = None
-    genes, no_species, named = 0, 0, 0
+    listed_species = {}
+    spe_path = os.path.join(src, 'WBGeneSpe.txt')
+    if os.path.exists(spe_path):
+        with open(spe_path, encoding='utf-8', errors='replace') as fh:
+            for line in fh:
+                f = line.rstrip('\n').split('\t')
+                if len(f) >= 2 and f[0].startswith('WBGene') and f[1]:
+                    listed_species[f[0]] = f[1]
+    genes, no_species, named, disagree = 0, 0, 0, 0
     with open(os.path.join(raw, 'gene_list.txt')) as gl, \
             open(os.path.join(raw, 'meta', 'genes.tsv'), 'w', newline='', encoding='utf-8') as out:
         w = csv.writer(out, delimiter='\t', lineterminator='\n')
@@ -150,18 +182,22 @@ def main(src, raw, zeros_as_missing=False):
             if len(f) < 2:
                 continue
             wb = f[1]
-            sp = gene_species[wb].most_common(1)[0][0] if gene_species.get(wb) else ''
+            measured = gene_species[wb].most_common(1)[0][0] if gene_species.get(wb) else ''
+            sp = listed_species.get(wb) or measured
+            disagree += bool(listed_species.get(wb) and measured and measured != listed_species[wb])
             no_species += not sp
             named += wb in common
             w.writerow([wb, wb, common.get(wb, ''), '|'.join(a.replace('|', '/') for a in aliases.get(wb, {})),
                         sp, ''])
             genes += 1
 
-    print('datasets: %d listed (%d of %d table rows; %d display-only rows skipped); %d without a table row'
-          % (len(listed), len(listed) - len(missing), len(table), len(set(table) - set(listed)), len(missing)))
+    print('datasets: %d listed (searched), %d display-only (shown without expression data); %d listed '
+          'without a table row' % (len(listed), len(display), len(missing)))
     print('assays: ' + ', '.join('%s %d' % kv for kv in assays.most_common()))
-    print('genes: %d (%d with a common name, %d with aliases; %d not measured in any dataset, so no species)'
-          % (genes, named, len(aliases), no_species))
+    print('genes: %d (%d with a common name, %d with aliases); species from %s; %d without a species%s'
+          % (genes, named, len(aliases), 'WBGeneSpe.txt (%d genes) and datasets' % len(listed_species)
+             if listed_species else 'the datasets measuring them', no_species,
+             '; %d measured in datasets of another species' % disagree if disagree else ''))
     print('zero placeholders (<= %.1f, i.e. log2 of ~0): %d of %d values (%.2f%%), in %d of %d files%s'
           % (ZERO, zero_values, values, 100.0 * zero_values / max(values, 1), zero_files, len(listed),
              '; written as missing' if zeros_as_missing else ''))

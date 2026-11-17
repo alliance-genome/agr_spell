@@ -65,7 +65,9 @@ CREATE TABLE datasets (
     has_metadata INTEGER NOT NULL,
     species TEXT,                   -- species of most of the dataset's genes
     assay TEXT,                     -- e.g. microarray | RNA-seq (datasets.assays in mod.toml)
-    value_type TEXT                 -- what the values are, e.g. log2 TMM CPM, log2 TPM, log2 ratio
+    value_type TEXT,                -- what the values are, e.g. log2 TMM CPM, log2 TPM, log2 ratio
+    display_only INTEGER NOT NULL DEFAULT 0,  -- 1: shown with its metadata, but has no expression data
+    links TEXT                      -- 'label <url> | label <url>' (GEO record, data downloads, atlases, ...)
 );
 CREATE TABLE dataset_qc (
     dataset_id INTEGER PRIMARY KEY REFERENCES datasets(id),
@@ -176,7 +178,8 @@ def read_dataset_table(path):
 
     Columns (only ``filename`` is required): filename, geo_id, pubmed_id, title,
     description, first_author, authors, journal, year, tags ('|'-separated), assay,
-    value_type.
+    value_type, links ('label <url> | label <url>'), and for datasets shown without expression
+    data, display_only (yes), dataset_id and species.
     """
     out = {}
     with open(path, newline='', errors='replace') as fh:
@@ -192,7 +195,10 @@ def read_dataset_table(path):
                 'geo_id': get('geo_id'), 'title': get('title'), 'description': get('description'),
                 'first_author': get('first_author'), 'authors': get('authors'),
                 'journal': get('journal'), 'tags': get('tags'),
-                'assay': get('assay'), 'value_type': get('value_type'),
+                'assay': get('assay'), 'value_type': get('value_type'), 'links': get('links'),
+                'species': get('species'),
+                'display_only': (get('display_only') or '').lower() in ('yes', 'y', 'true', '1'),
+                'dataset_id': int(get('dataset_id')) if (get('dataset_id') or '').isdigit() else None,
             }
     return out
 
@@ -276,13 +282,27 @@ def write_metadata(db, comp, genes, datasets, default_species=None):
         geo = (meta and meta.get('geo_id')) or (re.match(r'(GSE\d+)', ds.filename) or [None, None])[1]
         counts = Counter(species_of[comp.gene_ids[i]] for i in ds.gene_index)
         species = counts.most_common(1)[0][0] if counts else default_species
-        db.execute('INSERT INTO datasets VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (
+        db.execute('INSERT INTO datasets VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (
             ds.id, ds.filename, geo, meta and meta['pubmed_id'],
             (meta and meta['title']) or geo or ds.filename,
             meta and meta['description'], meta and meta['first_author'], meta and meta['authors'],
             meta and meta['journal'], meta and meta['year'], meta and meta['tags'],
             ds.num_conds, len(ds.gene_index), int(bool(meta and meta.get('title'))), species,
-            meta and meta.get('assay'), meta and meta.get('value_type')))
+            meta and meta.get('assay'), meta and meta.get('value_type'), 0, meta and meta.get('links')))
+
+    # Display-only datasets: metadata and links, no expression data (never searched).
+    built = {ds.id for ds in comp.datasets}
+    built_files = {ds.filename for ds in comp.datasets}
+    for fname, meta in datasets.items():
+        if not meta.get('display_only') or fname in built_files or meta.get('dataset_id') in built:
+            continue
+        if meta.get('dataset_id') is None:
+            continue                            # validate reports it
+        db.execute('INSERT INTO datasets VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)', (
+            meta['dataset_id'], fname, meta.get('geo_id'), meta['pubmed_id'], meta['title'] or fname,
+            meta['description'], meta['first_author'], meta['authors'], meta['journal'], meta['year'],
+            meta['tags'], None, None, int(bool(meta.get('title'))), meta.get('species') or default_species,
+            meta.get('assay'), meta.get('value_type'), 1, meta.get('links')))
 
 
 def _qc_one(values, centre=False):

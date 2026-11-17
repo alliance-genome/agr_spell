@@ -489,7 +489,11 @@ def cmd_add_datasets(args):
         print('No new files in raw/expression/: every file there is already listed.')
         return 0
 
-    ids, problems = _assign_ids(files, supplied, listed, retired)
+    # Display-only datasets have IDs too (in the dataset table); never hand those out again.
+    from spell_next.build import read_dataset_info
+    display = [(m['dataset_id'], f) for f, m in read_dataset_info(p['raw'], cfg).items()
+               if m.get('display_only') and m.get('dataset_id') is not None]
+    ids, problems = _assign_ids(files, supplied, listed, retired + display)
     if problems:
         print('Nothing added:\n  ' + '\n  '.join(problems))
         return 1

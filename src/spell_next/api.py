@@ -5,6 +5,8 @@ Run: SPELL_NEXT_DATA=data/build uvicorn spell_next.api:app
 Single-gene results are served from the precomputed table; multi-gene searches run
 live against the in-memory compendium, a few at a time.
 """
+import gzip
+import io
 import json
 import os
 import re
@@ -16,7 +18,7 @@ from pathlib import Path
 
 import numpy as np
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -119,10 +121,12 @@ def precomputed():
 
 
 def assay_columns():
-    """SQL for the assay columns (NULL for builds made before datasets had them)."""
+    """SQL for the assay, value type, display-only and links columns (defaults for builds made before them)."""
     with db() as con:
         cols = {r['name'] for r in con.execute('PRAGMA table_info(datasets)')}
-    return 'assay, value_type' if 'assay' in cols else 'NULL AS assay, NULL AS value_type'
+    out = 'assay, value_type' if 'assay' in cols else 'NULL AS assay, NULL AS value_type'
+    out += ', display_only, links' if 'display_only' in cols else ', 0 AS display_only, NULL AS links'
+    return out
 
 
 def load_config():
@@ -186,6 +190,19 @@ class SearchRequest(BaseModel):
     dataset_ids: list[int] | None = Field(None, max_length=10000, description='search only these datasets')
 
 
+LINK = re.compile(r'\s*(.*?)\s*<(https?://[^>\s]+)>\s*')
+
+
+def parse_links(value):
+    """'GEO GSE1 <https://...> | Atlas <https://...>' -> [{'label', 'url'}] (http(s) links only)."""
+    out = []
+    for part in (value or '').split(' | '):
+        m = LINK.fullmatch(part)
+        if m:
+            out.append({'label': m.group(1) or m.group(2), 'url': m.group(2)})
+    return out
+
+
 def split_tags(value):
     return [t for t in (value or '').split('|') if t]
 
@@ -197,7 +214,7 @@ def filtered_datasets(con, tags, assay, ids=None):
     wanted, allowed = set(tags), None if ids is None else set(ids)
     return [r['id'] for r in con.execute('SELECT id, tags, %s FROM datasets' % state['assay_cols'])
             if (not wanted or wanted & set(split_tags(r['tags']))) and (not assay or r['assay'] == assay)
-            and (allowed is None or r['id'] in allowed)]
+            and (allowed is None or r['id'] in allowed) and not r['display_only']]
 
 
 def log_filters(tags, assay, ids=None):
@@ -336,16 +353,54 @@ def info():
             if 'dataset_qc' in has else {}
         flagged = con.execute("SELECT COUNT(*) FROM dataset_qc WHERE warnings != ''").fetchone()[0] \
             if 'dataset_qc' in has else 0
+        searched = '(SELECT has_metadata, %s FROM datasets) WHERE display_only = 0' % state['assay_cols']
         return {
-            'datasets': con.execute('SELECT COUNT(*) FROM datasets').fetchone()[0],
-            'datasets_with_metadata': con.execute('SELECT SUM(has_metadata) FROM datasets').fetchone()[0],
+            'datasets': con.execute('SELECT COUNT(*) FROM ' + searched).fetchone()[0],
+            'datasets_with_metadata': con.execute('SELECT SUM(has_metadata) FROM ' + searched).fetchone()[0],
+            'datasets_display_only': con.execute('SELECT COUNT(*) FROM (SELECT %s FROM datasets) WHERE display_only = 1'
+                                                 % state['assay_cols']).fetchone()[0],
             'conditions': con.execute('SELECT SUM(num_conds) FROM datasets').fetchone()[0],
             'genes': con.execute('SELECT COUNT(*) FROM genes').fetchone()[0],
             'qc_scales': qc,
             'qc_flagged': flagged,
             'versions': versions,
             'max_query_genes': MAX_QUERY_GENES,
+            'precomputed': state['precomputed'],
         }
+
+
+DOWNLOADS = {
+    'coexpression_genes.tsv.gz': (
+        ['query_systematic', 'query_name', 'rank', 'gene_systematic', 'gene_name', 'score'],
+        'SELECT q.systematic, q.standard, c.rank, h.systematic, h.standard, c.score FROM coexpression c '
+        'JOIN genes q ON q.id = c.gene_id JOIN genes h ON h.id = c.hit_id ORDER BY q.systematic, c.rank'),
+    'coexpression_datasets.tsv.gz': (
+        ['query_systematic', 'query_name', 'rank', 'dataset_id', 'geo_id', 'weight_percent', 'dataset_title'],
+        'SELECT q.systematic, q.standard, c.rank, d.id, d.geo_id, c.weight, d.title FROM coexpression_datasets c '
+        'JOIN genes q ON q.id = c.gene_id JOIN datasets d ON d.id = c.dataset_id ORDER BY q.systematic, c.rank'),
+}
+
+
+@app.get('/api/downloads/{name}')
+def download(name: str):
+    """Every gene's precomputed top co-expressed genes or datasets, as gzipped tab-separated text."""
+    if name not in DOWNLOADS:
+        raise HTTPException(404, 'unknown download')
+    if not state['precomputed']:
+        raise HTTPException(404, 'this site has no precomputed results (searches run live)')
+    cache = state.setdefault('downloads', {})
+    if name not in cache:
+        cols, sql = DOWNLOADS[name]
+        buf = io.StringIO()
+        buf.write('\t'.join(cols) + '\n')
+        with db() as con:
+            for row in con.execute(sql):
+                buf.write('\t'.join('%.4g' % v if isinstance(v, float) else
+                                    str(v if v is not None else '').replace('\t', ' ') for v in row) + '\n')
+        cache[name] = gzip.compress(buf.getvalue().encode(), 6)
+    return Response(cache[name], media_type='application/gzip',
+                    headers={'Content-Disposition': 'attachment; filename="%s_%s"' % (
+                        state['config']['mod']['id'].lower(), name)})
 
 
 @app.get('/api/assays')
@@ -411,8 +466,10 @@ def dataset_detail(dataset_id: int):
         has_qc = con.execute("SELECT 1 FROM sqlite_master WHERE name = 'dataset_qc'").fetchone()
         qc = has_qc and con.execute('SELECT scale, actions, warnings, cond_median_spread, z_mean_before, '
                                     'z_mean_after FROM dataset_qc WHERE dataset_id = ?', (dataset_id,)).fetchone()
-    ds = next(d for d in state['comp'].datasets if d.id == dataset_id)
-    return {**dict(row), 'conditions': ds.conditions, 'qc': dict(qc) if qc else None}
+    ds = next((d for d in state['comp'].datasets if d.id == dataset_id), None)
+    return {**dict(row), 'display_only': int(ds is None), 'links': parse_links(row['links'] if 'links' in row.keys()
+                                                                               else None),
+            'conditions': ds.conditions if ds else [], 'qc': dict(qc) if qc and ds else None}
 
 
 @app.get('/api/datasets/{dataset_id}/expression')

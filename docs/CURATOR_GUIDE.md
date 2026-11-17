@@ -169,10 +169,16 @@ prints the next free ID) and a row in `datasets.tsv`.
 | `tags` | SGD keywords, separated by `\|`, e.g. `stress\|heat shock` |
 | `assay` | `microarray` or `RNA-seq` |
 | `value_type` | What the values are (section 3.2) |
+| `links` | Extra links shown on the dataset page, as `label <url> \| label <url>` (optional) |
+| `display_only` | `yes` for a dataset shown for reference without expression data (optional, see below) |
+| `dataset_id`, `species` | Needed only for display-only datasets (they are not in `dataset_list.txt`) |
 
 - **Tags describe the biology** and must be SGD keywords, spelled exactly as in the keyword list
   (e.g. `QTL`, not `QTLs`). Don't use tags for the assay; that is what the `assay` column is for.
 - **Assay** is required: datasets without one are left out when users filter by assay.
+- **Display-only datasets** (e.g. single-cell atlases with no expression matrix) can be listed for reference:
+  a row with `display_only` = `yes`, a `dataset_id` not used by any other dataset, and `species`. They show
+  on the Datasets page marked "display only", with their metadata and links, and are never searched.
 - **Editing in Excel**: save as "Tab delimited text" and keep the header row. Avoid line breaks
   inside cells.
 - **If the metadata comes from the SGD database**, replace `datasets.tsv` with the new export

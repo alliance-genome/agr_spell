@@ -124,6 +124,24 @@ def test_bad_config_is_rejected(tmp_path):
         modconfig.load(str(tmp_path))
 
 
+def test_precomputed_results_download(client):
+    import csv
+    import gzip
+    import io
+
+    r = client.get('/api/downloads/coexpression_genes.tsv.gz')
+    assert r.status_code == 200 and 'attachment' in r.headers['content-disposition']
+    rows = list(csv.DictReader(io.StringIO(gzip.decompress(r.content).decode()), delimiter='\t'))
+    a1 = [x for x in rows if x['query_systematic'] == 'A1']
+    assert a1[0]['rank'] == '1' and {x['gene_name'] for x in a1[:3]} == {'a-2', 'a-3', 'a-4'}
+    d = client.get('/api/downloads/coexpression_datasets.tsv.gz')
+    drows = list(csv.DictReader(io.StringIO(gzip.decompress(d.content).decode()), delimiter='\t'))
+    assert {'dataset_id', 'weight_percent', 'dataset_title'} <= set(drows[0])
+    assert client.get('/api/downloads/other.tsv.gz').status_code == 404
+    assert client.get('/api/info').json()['precomputed'] is True
+
+
+
 @pytest.fixture(scope='module')
 def live_client(tmp_path_factory):
     """The toy MOD built with [build] precompute = false."""
@@ -155,3 +173,8 @@ def test_without_precompute_single_gene_searches_run_live(build, live_client):
     assert [(g['id'], round(g['score'], 6)) for g in got['genes']] == [(h, round(s, 6)) for h, s in want]
     via_search = live.post('/api/search', json={'genes': ['a-1'], 'limit': 5}).json()
     assert [g['id'] for g in via_search['genes']] == [h for h, _ in want]
+
+
+def test_no_download_without_precompute(live_client):
+    live, _ = live_client
+    assert live.get('/api/downloads/coexpression_genes.tsv.gz').status_code == 404
