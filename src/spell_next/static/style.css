@@ -108,11 +108,15 @@ h2.csv-row { margin: 0 0 6px; text-align: right; }
 .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; }
 @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
 
-/* AG Grid cells: let content wrap and centre it vertically in the fixed row height. */
+/* AG Grid cells: let content wrap and centre every column vertically in the fixed row height. */
+.ag-row .ag-cell { display: flex; align-items: center; line-height: 1.35; }
+.ag-row .ag-cell > .ag-cell-wrapper { width: 100%; min-width: 0; }
 .ag-cell .cell {
-  display: flex; flex-direction: column; justify-content: center; height: 100%;
+  display: flex; flex-direction: column; justify-content: center;
   line-height: 1.35; white-space: normal; overflow: hidden;
 }
+/* Datasets page: author · year · journal on one line, so long journal names don't overflow the row. */
+#ds-grid .cell-inner > .sub { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cell-inner { min-width: 0; }
 .cell .sub { margin: 0; font-size: 13px; }
 .tag-picker .tag.more { display: none; }
