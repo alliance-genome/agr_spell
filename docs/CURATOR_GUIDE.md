@@ -126,8 +126,9 @@ so validate warns: fix the file rather than relying on it.
    ./spellctl add-datasets sgd --metadata /srv/spell/sgd/raw/new_datasets.csv --dry-run
    ./spellctl add-datasets sgd --metadata /srv/spell/sgd/raw/new_datasets.csv
    ```
-   For each file it assigns the next free dataset ID (never reusing a retired one), appends
-   a line to `dataset_list.txt` and a row to `datasets.tsv`, and keeps backups of both
+   For each file it uses the table's `dataset_id` if it has one (e.g. to keep the ID a dataset has in
+   the old SPELL; IDs already used, including retired ones, are refused), otherwise the next free ID.
+   It then appends a line to `dataset_list.txt` and a row to `datasets.tsv`, and keeps backups of both
    (`*.bak-<date>`).
    - **Your table's values are used as given.** Anything it leaves blank (title, PubMed ID,
      authors, journal, year, abstract, assay) is filled from GEO and PubMed, using the GSE ID in

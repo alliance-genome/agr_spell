@@ -386,6 +386,35 @@ def cmd_find_duplicates(args):
     return 0
 
 
+def _assign_ids(files, supplied, listed, retired):
+    """Dataset IDs for new files: the table's dataset_id where given (e.g. to match the old SPELL), else the
+    next free IDs. IDs of listed or retired datasets are never reused. Returns ({file: id}, problems)."""
+    used = {i: f for i, f in retired}
+    used.update({i: f for i, f in listed})
+    ids, problems = {}, []
+    for f in files:
+        raw = (supplied.get(f) or {}).get('dataset_id') or (supplied.get(f) or {}).get('id') or ''
+        if not raw:
+            continue
+        if not raw.isdigit() or int(raw) == 0:
+            problems.append('%s: dataset_id %r is not a positive whole number' % (f, raw))
+        elif int(raw) in used:
+            problems.append('%s: dataset_id %s is already used by %s%s' % (
+                f, raw, used[int(raw)], ' (retired)' if int(raw) in dict(retired) and
+                int(raw) not in dict(listed) else ''))
+        elif int(raw) in ids.values():
+            problems.append('%s: dataset_id %s is given to two files' % (f, raw))
+        else:
+            ids[f] = int(raw)
+    taken = set(used) | set(ids.values())
+    nxt = max(taken, default=0) + 1
+    for f in files:
+        if f not in ids:
+            ids[f] = nxt
+            nxt += 1
+    return ids, problems
+
+
 FETCHED = ('title', 'pubmed_id', 'description', 'first_author', 'authors', 'journal', 'year', 'assay')
 
 
@@ -458,6 +487,11 @@ def cmd_add_datasets(args):
         print('No new files in raw/expression/: every file there is already listed.')
         return 0
 
+    ids, problems = _assign_ids(files, supplied, listed, retired)
+    if problems:
+        print('Nothing added:\n  ' + '\n  '.join(problems))
+        return 1
+
     gse = {f: (supplied.get(f) or {}).get('geo_id') or geo.geo_id_of(f) for f in files}
     # Look up only datasets the curator's table leaves incomplete.
     lookup = {g for f, g in gse.items() if g and any(not (supplied.get(f) or {}).get(c) for c in FETCHED)}
@@ -478,9 +512,8 @@ def cmd_add_datasets(args):
               'year', 'tags', 'assay', 'value_type'):
         if c not in cols:
             cols.append(c)
-    next_id = max([i for i, _ in listed + retired], default=0) + 1
     rows, lines, notes = [], [], []
-    for k, f in enumerate(files):
+    for f in files:
         m = dict(meta.get(gse[f]) or {})
         found = bool(m) or gse[f] not in lookup
         m.pop('gdstype', None)
@@ -488,7 +521,7 @@ def cmd_add_datasets(args):
                  assay=args.assay or m.get('assay', ''), value_type=args.value_type or '')
         m.update({c: v for c, v in (supplied.get(f) or {}).items() if v})    # the curator's values win
         rows.append({c: re.sub(r'[\t\r\n]+', ' ', str(m.get(c) or '')) for c in cols})
-        lines.append('%d\t%s\n' % (next_id + k, f))
+        lines.append('%d\t%s\n' % (ids[f], f))
         if not gse[f]:
             notes.append('%s: no GSE ID in the file name, so no metadata was fetched' % f)
         elif not found and not args.no_fetch:
@@ -533,7 +566,7 @@ def cmd_add_datasets(args):
                 fh.write('\n')
             csv.DictWriter(fh, cols, delimiter='\t', lineterminator='\n').writerows(rows)
     print('\nAdded %d datasets (IDs %d-%d) to dataset_list.txt and %s (backups kept as *.bak-*).'
-          % (len(files), next_id, next_id + len(files) - 1, cfg['datasets']['metadata']))
+          % (len(files), min(ids.values()), max(ids.values()), cfg['datasets']['metadata']))
     print('Next: check the new rows (add tags; set value_type for RNA-seq), then validate and rebuild.')
     return 0
 
@@ -598,8 +631,9 @@ def main(argv=None):
              'add new expression files to the dataset lists, with metadata from GEO and PubMed')
     sp.add_argument('files', nargs='*', help='files in raw/expression/ (default: those in --metadata, else '
                                              'every file not yet listed)')
-    sp.add_argument('--metadata', help='table of the new datasets (filename plus any datasets.tsv columns); '
-                                       'its values are used as given, GEO/PubMed fill blanks')
+    sp.add_argument('--metadata', help='table of the new datasets (filename plus any datasets.tsv columns, and '
+                                       'optionally dataset_id); its values are used as given, GEO/PubMed fill '
+                                       'blanks')
     sp.add_argument('--assay', help='assay for all of them (default: from GEO, e.g. microarray or RNA-seq)')
     sp.add_argument('--value-type', help='value_type for all of them, e.g. "log2 TMM CPM"')
     sp.add_argument('--tags', help='tags for all of them, |-separated')

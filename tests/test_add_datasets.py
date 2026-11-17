@@ -152,6 +152,33 @@ def test_find_duplicates_reports_groups(root, capsys):
     assert (root / 'raw' / '.dataset_fingerprints.json').exists()          # cached for the next run
 
 
+def test_dataset_ids_from_the_table(root, tmp_path, capsys):
+    table = tmp_path / 't.tsv'
+    table.write_text('dataset_id\tfilename\tassay\n'
+                     '3537\tGSE1002_set0.pcl\tmicroarray\n'
+                     '\tlocal.pcl\tmicroarray\n'
+                     '3301\tGSE1001.final.pcl\tRNA-seq\n')
+    assert cli.main(['add-datasets', str(root), '--metadata', str(table), '--no-fetch']) == 0
+    listing = (root / 'raw' / 'dataset_list.txt').read_text().splitlines()
+    assert listing[-3:] == ['3537\tGSE1002_set0.pcl', '3538\tlocal.pcl', '3301\tGSE1001.final.pcl']
+    assert cli.main(['validate', str(root), '--workers', '2']) == 0
+    capsys.readouterr()
+
+
+@pytest.mark.parametrize('ids, message', [
+    (('2', ''), 'dataset_id 2 is already used by A_set1.pcl'),
+    (('77', '77'), 'dataset_id 77 is given to two files'),
+    (('x1', ''), "dataset_id 'x1' is not a positive whole number"),
+])
+def test_bad_dataset_ids_are_refused(root, tmp_path, capsys, ids, message):
+    table = tmp_path / 't.csv'
+    table.write_text('dataset_id,filename\n%s,GSE1001.final.pcl\n%s,local.pcl\n' % ids)
+    before = (root / 'raw' / 'dataset_list.txt').read_text()
+    assert cli.main(['add-datasets', str(root), '--metadata', str(table), '--no-fetch']) == 1
+    assert message in capsys.readouterr().out
+    assert (root / 'raw' / 'dataset_list.txt').read_text() == before
+
+
 def test_ids_skip_retired_datasets(root):
     (root / 'raw' / 'retired').mkdir()
     (root / 'raw' / 'retired' / 'dataset_list.txt').write_text('40\told.pcl\n')
