@@ -173,34 +173,36 @@ class SearchRequest(BaseModel):
     tags: list[str] = Field(default_factory=list, max_length=50,
                             description='search only datasets carrying any of these tags')
     assay: str | None = Field(None, max_length=50, description='search only datasets of this assay')
+    dataset_ids: list[int] | None = Field(None, max_length=10000, description='search only these datasets')
 
 
 def split_tags(value):
     return [t for t in (value or '').split('|') if t]
 
 
-def filtered_datasets(con, tags, assay):
-    """IDs of datasets carrying any of ``tags`` and of ``assay`` (None: no restriction requested)."""
-    if not tags and not assay:
+def filtered_datasets(con, tags, assay, ids=None):
+    """IDs of datasets carrying any of ``tags``, of ``assay`` and among ``ids`` (None: no restriction requested)."""
+    if not tags and not assay and ids is None:
         return None
-    wanted = set(tags)
+    wanted, allowed = set(tags), None if ids is None else set(ids)
     return [r['id'] for r in con.execute('SELECT id, tags, %s FROM datasets' % state['assay_cols'])
-            if (not wanted or wanted & set(split_tags(r['tags']))) and (not assay or r['assay'] == assay)]
+            if (not wanted or wanted & set(split_tags(r['tags']))) and (not assay or r['assay'] == assay)
+            and (allowed is None or r['id'] in allowed)]
 
 
-def log_filters(tags, assay):
-    return list(tags) + (['assay:' + assay] if assay else [])
+def log_filters(tags, assay, ids=None):
+    return list(tags) + (['assay:' + assay] if assay else []) + (['datasets:%d' % len(ids)] if ids is not None else [])
 
 
 @app.post('/api/search')
 def live_search(req: SearchRequest):
     with db() as con:
         ids, unknown, ambiguous = resolve(con, req.genes)
-        dataset_ids = filtered_datasets(con, req.tags, req.assay)
+        dataset_ids = filtered_datasets(con, req.tags, req.assay, req.dataset_ids)
     if not ids:
         raise HTTPException(422, {'message': 'no recognised genes', 'unknown': unknown, 'ambiguous': ambiguous})
     if dataset_ids is not None and not dataset_ids:
-        raise HTTPException(422, {'message': 'no datasets match the selected tags and assay'})
+        raise HTTPException(422, {'message': 'no datasets match the selected tags, assay and datasets'})
     if len(ids) == 1 and dataset_ids is None:
         result = coexpression(ids[0], req.limit, req.datasets, '')
         return {**result, 'unknown': unknown, 'ambiguous': ambiguous, 'tags': [], 'assay': None,
@@ -216,7 +218,7 @@ def live_search(req: SearchRequest):
 
     hits = [(g, s) for g, s in zip(result.gene_ids, result.gene_scores) if g not in ids][:req.limit]
     names = [state['comp'].gene_names[state['comp'].index_of_id[g]] for g in ids]
-    state['log'].record('multi' if len(ids) > 1 else 'single', names, log_filters(req.tags, req.assay))
+    state['log'].record('multi' if len(ids) > 1 else 'single', names, log_filters(req.tags, req.assay, req.dataset_ids))
     weights = result.dataset_weights
     if weights is None:                       # single-gene search: weights only order the datasets
         total = sum(result.raw_weights) or 1.0

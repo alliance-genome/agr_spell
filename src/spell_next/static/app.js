@@ -122,7 +122,8 @@ function route() {
   const [path, qs] = location.hash.slice(1).split('?');
   const [, view, arg] = path.split('/').map((p) => decodeURIComponent(p || ''));
   const params = new URLSearchParams(qs || '');
-  const filter = { tags: (params.get('tags') || '').split('|').filter(Boolean), assay: params.get('assay') || '' };
+  const filter = { tags: (params.get('tags') || '').split('|').filter(Boolean), assay: params.get('assay') || '',
+    find: params.get('find') || '' };
   if (view === 'search' && arg) return showSearch(arg, filter);
   if (view === 'dataset' && arg) return showDataset(Number(arg));
   if (view === 'datasets') return showDatasets(filter);
@@ -132,21 +133,30 @@ function route() {
   return showHome();
 }
 
-// A dataset filter is { tags: [...], assay: '' }: datasets carrying any of the tags, of that assay.
-const NO_FILTER = { tags: [], assay: '' };
-const isFiltered = (f) => f.tags.length > 0 || Boolean(f.assay);
+// A dataset filter is { tags: [...], assay: '', find: '' }: datasets carrying any of the tags, of that assay,
+// whose title, authors, GEO or PubMed ID contain every word of find.
+const NO_FILTER = { tags: [], assay: '', find: '' };
+const isFiltered = (f) => f.tags.length > 0 || Boolean(f.assay) || Boolean(f.find);
 function filterQs(f = NO_FILTER, sep = '?') {
   const parts = [];
   if (f.tags && f.tags.length) parts.push(`tags=${encodeURIComponent(f.tags.join('|'))}`);
   if (f.assay) parts.push(`assay=${encodeURIComponent(f.assay)}`);
+  if (f.find) parts.push(`find=${encodeURIComponent(f.find)}`);
   return parts.length ? sep + parts.join('&') : '';
 }
 const searchHash = (query, f) => `#/search/${encodeURIComponent(query)}${filterQs(f)}`;
 const listingHash = (query, f) => `#/expression/${encodeURIComponent(query)}${filterQs(f)}`;
 // "RNA-seq datasets tagged <b>stress</b> or <b>heat shock</b>"
 const filterText = (f) => `${f.assay ? `<b>${esc(f.assay)}</b> ` : ''}datasets${f.tags.length ?
-  ` tagged ${f.tags.map((t) => `<b>${esc(t)}</b>`).join(' or ')}` : ''}`;
-const resultFilter = (r) => ({ tags: r.tags || [], assay: r.assay || '' });
+  ` tagged ${f.tags.map((t) => `<b>${esc(t)}</b>`).join(' or ')}` : ''}${f.find ?
+  ` matching “<b>${esc(f.find)}</b>”` : ''}`;
+const resultFilter = (r) => ({ tags: r.tags || [], assay: r.assay || '', find: r.find || '' });
+
+let datasetCache = null;
+async function allDatasets() {
+  if (!datasetCache) datasetCache = await api('/api/datasets');
+  return datasetCache;
+}
 
 let assayCache = null;
 async function allAssays() {
@@ -231,8 +241,8 @@ const TAGS_NAMED = 4;     // the filter header names up to this many selected ta
 function tagFilterHtml(what, f) {
   const named = f.tags.slice(0, TAGS_NAMED).join(', ') +
     (f.tags.length > TAGS_NAMED ? ` and ${f.tags.length - TAGS_NAMED} more` : '');
-  const chosen = [f.assay, f.tags.length ? `${f.tags.length > 1 ? 'tags' : 'tag'}: ${named}` : '']
-    .filter(Boolean).join('; ');
+  const chosen = [f.assay, f.tags.length ? `${f.tags.length > 1 ? 'tags' : 'tag'}: ${named}` : '',
+    f.find ? `matching “${f.find}”` : ''].filter(Boolean).join('; ');
   return `<details class="tagfilter">
       <summary title="${esc([f.assay, f.tags.join(', ')].filter(Boolean).join('; '))}">Restrict the ${what} to an
         assay or to datasets with these tags${chosen ? ` <span class="chosen">(${esc(chosen)})</span>` : ''}
@@ -254,7 +264,7 @@ function tagFilter(f, hashFor) {
   }).catch(() => {});
   const assay = () => (document.getElementById('assay-select') || { value: f.assay }).value;
   document.getElementById('tags-apply').addEventListener('click', () => {
-    location.hash = hashFor({ tags: [...picked], assay: assay() });
+    location.hash = hashFor({ tags: [...picked], assay: assay(), find: f.find });
   });
   document.getElementById('tags-clear').addEventListener('click', () => { location.hash = hashFor(NO_FILTER); });
 }
@@ -283,12 +293,18 @@ async function showSearch(query, filter = NO_FILTER) {
     const names = query.split(/[\s,;]+/).filter(Boolean);
     const lookup = await api(`/api/genes/lookup?q=${encodeURIComponent(names.join(' '))}`);
     if (isFiltered(filter)) {
+      let ids = null;
+      if (filter.find) {
+        ids = (await allDatasets()).filter((d) => datasetMatches(d, filter.find)).map((d) => d.id);
+        if (!ids.length) throw new Error(`No dataset matches “${filter.find}”`);
+      }
       result = await api('/api/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ genes: names, limit: 100, datasets: 100, tags: filter.tags,
-          assay: filter.assay || null }),
+          assay: filter.assay || null, dataset_ids: ids }),
       });
+      result.find = filter.find;
     } else if (lookup.genes.length === 1) {
       result = await api(`/api/genes/${lookup.genes[0].id}/coexpression?limit=100&datasets=100`);
       result.unknown = lookup.unknown;
@@ -332,6 +348,9 @@ function renderResults(r, query) {
     <p class="sub"><a href="${listingHash(query, resultFilter(r))}">Show the expression of the query genes only</a>
       (no co-expression search)</p>
     ${tagFilterHtml('search', resultFilter(r))}
+    <div class="ds-tools"><input type="search" id="results-filter" aria-label="Find a dataset in these results"
+      placeholder="Find a dataset in these results: title, author, GEO or PubMed ID…"></div>
+    <p class="sub" id="results-count" hidden></p>
     <h2>Expression in the most informative datasets</h2>
     <div id="heatmaps"></div>
     <div class="grid">
@@ -397,7 +416,31 @@ function renderResults(r, query) {
   tagFilter(resultFilter(r), (f) => searchHash(query, f));
 
   const genes = [...r.query, ...r.genes.slice(0, HEATMAP_GENES)];
-  heatmapPager(document.getElementById('heatmaps'), r.datasets, genes, r.query.length);
+  const heatmaps = document.getElementById('heatmaps');
+  heatmapPager(heatmaps, r.datasets, genes, r.query.length);
+  findBox('results', r.datasets, (shown) => {
+    datasetsGrid.setGridOption('rowData', shown.map((d) => ({ ...d, rank: r.datasets.indexOf(d) + 1 })));
+    if (shown.length) heatmapPager(heatmaps, shown, genes, r.query.length);
+    else heatmaps.innerHTML = '<p class="sub">No dataset matches.</p>';
+  });
+}
+
+// "Find a dataset" box (#<prefix>-filter, count in #<prefix>-count): calls show(matching datasets) as the user
+// types; onText(text) is told the text too (e.g. to keep it in the page address).
+function findBox(prefix, datasets, show, onText = () => {}) {
+  const input = document.getElementById(`${prefix}-filter`);
+  let timer = null;
+  const apply = () => {
+    const text = input.value.trim();
+    const shown = text ? datasets.filter((d) => datasetMatches(d, text)) : datasets;
+    const count = document.getElementById(`${prefix}-count`);
+    count.hidden = !text;
+    count.textContent = `${shown.length} of ${datasets.length} datasets match “${text}”.`;
+    show(shown);
+    onText(text);
+  };
+  input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(apply, 200); });
+  return apply;
 }
 
 // Heatmaps for a list of datasets, HEATMAP_DATASETS per page.
@@ -666,7 +709,7 @@ async function showListing(query, filter = NO_FILTER) {
   app.innerHTML = `<p class="loading">Loading expression of ${esc(query)}…</p>`;
   let r;
   try {
-    const qs = `genes=${encodeURIComponent(query)}${filterQs(filter, '&')}`;
+    const qs = `genes=${encodeURIComponent(query)}${filterQs({ ...filter, find: '' }, '&')}`;
     r = await api(`/api/expression-listing?${qs}`);
   } catch (err) {
     app.innerHTML = `<p class="notice">${esc(err.message)}${isFiltered(filter) ?
@@ -679,13 +722,14 @@ async function showListing(query, filter = NO_FILTER) {
     <div class="chips">${r.query.map((g) => `<span class="chip" title="${esc(g.description)}">
       ${esc(label(g))}</span>`).join('')}</div>
     ${r.unknown.length ? `<p class="notice">Not found: ${r.unknown.map(esc).join(', ')}</p>` : ''}
-    <p class="sub">${r.datasets.length} datasets measure ${n > 1 ? 'these genes' : 'this gene'}${isFiltered(filter) ?
-      ` among the ${filterText(filter)}` : ''}. Datasets measuring the most query genes come
-      first, then those where the genes vary most. No co-expression search is run;
-      <a href="${searchHash(query, filter)}">search for co-expressed genes</a>.</p>
+    <p class="sub">${r.datasets.length} datasets measure ${n > 1 ? 'these genes' : 'this gene'}${
+      filter.tags.length || filter.assay ? ` among the ${filterText({ ...filter, find: '' })}` : ''}.
+      Datasets measuring the most query genes come first, then those where the genes vary most.
+      No co-expression search is run;
+      <a id="to-search" href="${searchHash(query, filter)}">search for co-expressed genes</a>.</p>
     ${tagFilterHtml('listing', filter)}
     <div class="ds-tools"><input type="search" id="listing-filter" aria-label="Find a dataset"
-      placeholder="Find a dataset: title, author, GEO or PubMed ID…"></div>
+      placeholder="Find a dataset: title, author, GEO or PubMed ID…" value="${esc(filter.find)}"></div>
     <p class="sub" id="listing-count" hidden></p>
     <h2>Expression</h2>
     <div id="heatmaps"></div>
@@ -709,21 +753,17 @@ async function showListing(query, filter = NO_FILTER) {
   const heatmaps = document.getElementById('heatmaps');
   heatmapPager(heatmaps, r.datasets, r.query, n);
   tagFilter(filter, (f) => listingHash(query, f));
-  // "Find a dataset": narrows both the heatmaps and the table.
-  let timer = null;
-  document.getElementById('listing-filter').addEventListener('input', (e) => {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      const text = e.target.value.trim();
-      const shown = text ? r.datasets.filter((d) => datasetMatches(d, text)) : r.datasets;
-      const count = document.getElementById('listing-count');
-      count.hidden = !text;
-      count.textContent = `${shown.length} of ${r.datasets.length} datasets match “${text}”.`;
-      listingGrid.setGridOption('rowData', shown);
-      if (shown.length) heatmapPager(heatmaps, shown, r.query, n);
-      else heatmaps.innerHTML = '<p class="sub">No dataset matches.</p>';
-    }, 200);
+  // "Find a dataset": narrows both the heatmaps and the table, and carries over to a co-expression search.
+  const apply = findBox('listing', r.datasets, (shown) => {
+    listingGrid.setGridOption('rowData', shown);
+    if (shown.length) heatmapPager(heatmaps, shown, r.query, n);
+    else heatmaps.innerHTML = '<p class="sub">No dataset matches.</p>';
+  }, (text) => {
+    const f = { ...filter, find: text };
+    history.replaceState(null, '', listingHash(query, f));
+    document.getElementById('to-search').href = searchHash(query, f);
   });
+  if (filter.find) apply();
 }
 
 async function showHelp() {
@@ -760,7 +800,10 @@ async function showHelp() {
       <i>Restrict the search to an assay or to datasets with these tags</i>, or choose an assay and tags on the
       <a href="#/datasets">Datasets</a> page and search there. A dataset is used if it is of the chosen assay
       and carries any selected tag. Tags are ${esc(MOD())} keywords, grouped by category; hover over a tag for its
-      definition. <i>Sort</i> lists them by how many datasets carry them, or alphabetically.
+      definition. <i>Sort</i> lists them by how many datasets carry them, or alphabetically. Text typed in the
+      Datasets page filter (a title word, author, GEO or PubMed ID) restricts a search from that page too, to the
+      datasets listed. On a results page, <i>Find a dataset in these results</i> narrows the datasets shown without
+      searching again.
       Unlike the original SPELL, which searched every dataset and only hid the others from the list, the search
       itself is limited to the tagged datasets, so the gene ranking reflects only them.</p>
     <h2>Expression without a search</h2>
@@ -846,7 +889,8 @@ async function showDatasets(filter = NO_FILTER) {
   const selected = new Set(filter.tags);
   const speciesFilter = () => (document.getElementById('ds-species') || { value: '' }).value;
   const assayFilter = () => (document.getElementById('ds-assay') || { value: '' }).value;
-  const current = () => ({ tags: [...selected], assay: assayFilter() });
+  const findText = () => (document.getElementById('ds-filter') || { value: '' }).value.trim();
+  const current = () => ({ tags: [...selected], assay: assayFilter(), find: findText() });
   app.innerHTML = `
     <h1>Datasets</h1>
     <p class="sub">${datasets.length} expression datasets. Pick tags to list matching datasets (a dataset
@@ -856,7 +900,7 @@ async function showDatasets(filter = NO_FILTER) {
       ${assaySelect('ds-assay', assays, filter.assay)}
       ${multiSpecies() ? `<select id="ds-species" aria-label="Species"><option value="">All species</option>${
         CONFIG.species.map((sp) => `<option>${esc(sp)}</option>`).join('')}</select>` : ''}
-      <input type="search" id="ds-filter" aria-label="Filter datasets"
+      <input type="search" id="ds-filter" aria-label="Filter datasets" value="${esc(filter.find)}"
         placeholder="Filter by title, author, GEO or PubMed ID…">
       <form id="ds-search" class="search">
         <input type="search" id="ds-genes" placeholder="Gene name(s) to search in the selected datasets"
@@ -918,7 +962,9 @@ async function showDatasets(filter = NO_FILTER) {
   if (assayBox) assayBox.addEventListener('change', filterChanged);
   document.getElementById('ds-filter').addEventListener('input', (e) => {
     grid.setGridOption('quickFilterText', e.target.value);
+    history.replaceState(null, '', `#/datasets${filterQs(current())}`);
   });
+  if (filter.find) grid.setGridOption('quickFilterText', filter.find);
   document.getElementById('ds-search').addEventListener('submit', (e) => {
     e.preventDefault();
     const q = document.getElementById('ds-genes').value.trim();

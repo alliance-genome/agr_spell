@@ -91,6 +91,16 @@ def test_search_restricted_to_an_assay(client, genes):
                        ).status_code == 422                        # no microarray dataset is tagged stress
 
 
+def test_search_restricted_to_listed_datasets(client):
+    ids = {d['geo_id']: d['id'] for d in client.get('/api/datasets').json()}
+    body = client.post('/api/search', json={'genes': ['a-1', 'a-2'], 'dataset_ids': [ids['GSE9002']]}).json()
+    assert body['datasets_searched'] == 1 and [d['geo_id'] for d in body['datasets']] == ['GSE9002']
+    both = client.post('/api/search', json={'genes': ['a-1'], 'assay': 'RNA-seq',
+                                            'dataset_ids': [ids['GSE9001'], ids['GSE9002']]}).json()
+    assert [d['geo_id'] for d in both['datasets']] == ['GSE9001']      # ids and assay combine
+    assert client.post('/api/search', json={'genes': ['a-1'], 'dataset_ids': [999]}).status_code == 422
+
+
 def test_expression_listing_restricted_to_an_assay(client):
     body = client.get('/api/expression-listing', params={'genes': 'a-1', 'assay': 'microarray'}).json()
     assert body['assay'] == 'microarray' and [d['geo_id'] for d in body['datasets']] == ['GSE9002']
