@@ -33,6 +33,11 @@ function saveDisplay() {
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g,
   (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const label = (g) => g.standard || g.systematic;
+// Dataset titles and summaries may carry simple markup, e.g. "<i>rnt1</i> null mutant": shown as italics, stripped
+// where HTML cannot appear (tooltips, sorting, find boxes, CSV).
+const TITLE_TAGS = /<(\/?)(i|em|b|strong|sub|sup)>/gi;
+const plainTitle = (s) => String(s ?? '').replace(TITLE_TAGS, '');
+const titleHtml = (s) => esc(s).replace(/&lt;(\/?)(i|em|b|strong|sub|sup)&gt;/gi, '<$1$2>');
 // MOD config (branding, gene link template, examples, species), loaded before the first route.
 let CONFIG = { mod: { id: '', examples: [] }, links: { gene: '' }, species: [] };
 const MOD = () => CONFIG.mod.id;
@@ -86,7 +91,7 @@ function csvButton(section, gridApi, fileName, columnKeys) {
     allColumns: true,
     processCellCallback: (p) => (Array.isArray(p.value)
       ? p.value.map((v) => (typeof v === 'object' ? `${v.term_id} ${v.name}` : v)).join('; ')
-      : p.value),
+      : p.column.getColId() === 'title' ? plainTitle(p.value) : p.value),
   }));
   section.querySelector('h2').appendChild(btn);
 }
@@ -105,7 +110,7 @@ const datasetMeta = (d, extra = []) => [[d.first_author, d.year].filter(Boolean)
   d.pubmed_id && `PMID ${d.pubmed_id}`, ...extra].filter(Boolean).map(esc).join(' · ');
 
 // Text a dataset filter box searches: title, authors, journal, year, GEO and PubMed IDs, tags, assay.
-const datasetText = (d) => [d.title, d.first_author, d.authors, d.journal, d.year, d.geo_id,
+const datasetText = (d) => [plainTitle(d.title), d.first_author, d.authors, d.journal, d.year, d.geo_id,
   d.pubmed_id && `PMID ${d.pubmed_id} PMID:${d.pubmed_id} ${d.pubmed_id}`, d.id,
   Array.isArray(d.tags) ? d.tags.join(' ') : (d.tags || '').replaceAll('|', ' '), d.assay]
   .filter(Boolean).join(' ').toLowerCase();
@@ -424,7 +429,8 @@ function renderResults(r, query) {
     { headerName: 'Assay', field: 'assay', hide: true },
     { headerName: 'Species', field: 'species', width: 170, hide: !multiSpecies() },
     { headerName: 'Dataset', field: 'title', flex: 1, minWidth: 240, cellRenderer: (c) => cell(
-      `<div class="clamp1"><a href="#/dataset/${c.data.id}" title="${esc(c.value)}">${esc(c.value)}</a></div>
+      `<div class="clamp1"><a href="#/dataset/${c.data.id}" title="${esc(plainTitle(c.value))}">${
+          titleHtml(c.value)}</a></div>
        <span class="sub">${datasetMeta(c.data, [`${c.data.num_conds} conditions`])}</span>`) },
     { headerName: 'Weight', field: 'weight', width: 120, sort: 'desc',
       cellRenderer: (c) => bar(`${c.value.toFixed(1)}%`, c.value / maxWeight) },
@@ -577,7 +583,7 @@ async function showEnrichment(geneIds, aspect, queryGenes) {
 async function drawHeatmap(box, dataset, genes, nQuery) {
   const card = document.createElement('div');
   card.className = 'heatmap';
-  card.innerHTML = `<h3><a href="#/dataset/${dataset.id}">${esc(dataset.title)}</a></h3>
+  card.innerHTML = `<h3><a href="#/dataset/${dataset.id}">${titleHtml(dataset.title)}</a></h3>
     <div class="meta">${esc(dataset.first_author || '')} ${esc(dataset.year || '')}</div>`;
   box.appendChild(card);
   let data;
@@ -598,7 +604,7 @@ async function drawHeatmap(box, dataset, genes, nQuery) {
   canvas.height = rowTop(genes.length);
   canvas.style.height = `${canvas.height}px`;
   canvas.setAttribute('role', 'img');
-  canvas.setAttribute('aria-label', `Expression heatmap for ${dataset.title}`);
+  canvas.setAttribute('aria-label', `Expression heatmap for ${plainTitle(dataset.title)}`);
   const ctx = canvas.getContext('2d');
   mapped.forEach((vals, gi) => {
     for (let c = 0; c < nCond; c++) {
@@ -645,7 +651,7 @@ async function openProfile(dataset, gene) {
   dialog.querySelector('.profile-title').innerHTML = `${esc(label(gene))}
     <span class="sub">${esc(gene.systematic)}</span>`;
   dialog.querySelector('.profile-dataset').innerHTML =
-    `<a href="#/dataset/${dataset.id}">${esc(dataset.title)}</a>`;
+    `<a href="#/dataset/${dataset.id}">${titleHtml(dataset.title)}</a>`;
   body.innerHTML = '<p class="loading">Loading…</p>';
   if (!dialog.open) dialog.showModal();
   let data;
@@ -765,7 +771,8 @@ async function showListing(query, filter = NO_FILTER) {
     { headerName: 'GEO', field: 'geo_id', hide: true },
     { headerName: 'PubMed', field: 'pubmed_id', hide: true },
     { headerName: 'Dataset', field: 'title', flex: 1, minWidth: 260, cellRenderer: (c) => cell(
-      `<div class="clamp1"><a href="#/dataset/${c.data.id}" title="${esc(c.value)}">${esc(c.value)}</a></div>
+      `<div class="clamp1"><a href="#/dataset/${c.data.id}" title="${esc(plainTitle(c.value))}">${
+          titleHtml(c.value)}</a></div>
        <span class="sub">${datasetMeta(c.data)}</span>`) },
     { headerName: 'Genes measured', field: 'genes_measured', width: 150, type: 'numericColumn',
       valueFormatter: (c) => `${c.value}/${n}` },
@@ -955,8 +962,10 @@ async function showDatasets(filter = NO_FILTER) {
     theme: GRID_THEME,
     rowData: datasets,
     columnDefs: [
-      { headerName: 'Dataset', field: 'title', flex: 2, minWidth: 280, cellRenderer: (c) => cell(
-        `<div class="clamp1"><a href="#/dataset/${c.data.id}" title="${esc(c.value)}">${esc(c.value)}</a></div>
+      { headerName: 'Dataset', field: 'title', flex: 2, minWidth: 280,
+        comparator: (a, b) => plainTitle(a).localeCompare(plainTitle(b)), cellRenderer: (c) => cell(
+        `<div class="clamp1"><a href="#/dataset/${c.data.id}" title="${esc(plainTitle(c.value))}">${
+          titleHtml(c.value)}</a></div>
          <span class="sub">${c.data.display_only ? '<span class="flag" title="No expression data in SPELL; not used ' +
            'in searches">display only</span> ' : ''}${
            esc([c.data.first_author, c.data.year, c.data.journal].filter(Boolean).join(' · '))}</span>`) },
@@ -1038,7 +1047,7 @@ async function showDataset(id) {
     'datasets need at least 5 to be used in searches, so this one is listed but not searched.' : '');
   app.innerHTML = `
     <p><a href="javascript:history.back()">← Back</a></p>
-    <h1>${esc(d.title)}</h1>
+    <h1>${titleHtml(d.title)}</h1>
     <p class="sub">${esc(d.authors || d.first_author || '')}${d.journal ? ' · ' + esc(d.journal) : ''}
       ${d.year ? ' · ' + esc(d.year) : ''}</p>
     ${d.has_metadata ? '' : '<p class="notice">Publication details for this dataset are not yet loaded.</p>'}
@@ -1057,7 +1066,7 @@ async function showDataset(id) {
         searched (tab-separated)</a></dd>`}
     </dl>
     ${d.qc ? qcSection(d.qc) : ''}
-    ${d.description ? `<h2>Summary</h2><p>${esc(d.description)}</p>` : ''}
+    ${d.description ? `<h2>Summary</h2><p>${titleHtml(d.description)}</p>` : ''}
     ${d.conditions.length ? `<h2>Conditions</h2>
     <ol class="conds">${d.conditions.map((c) => `<li>${esc(c)}</li>`).join('')}</ol>` : ''}`;
   // Add each tag's definition and a link to its keyword page, when the keyword list provides them.
