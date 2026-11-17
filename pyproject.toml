@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,6 +7,8 @@ name = "spell-next"
 version = "0.1.0"
 description = "Prototype replacement for SPELL query-driven co-expression search"
 requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = ["numpy>=2.0", "fastapi>=0.110", "uvicorn[standard]>=0.29"]
 
 [project.scripts]

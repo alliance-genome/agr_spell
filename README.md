@@ -217,3 +217,7 @@ production exactly (gene scores, dataset order and weights, up to ties).
 | Runs of tabs collapsed when reading PCL files | Values after an empty cell shift left; 25 of 802 files affected, 2 entirely | `faithful=False` |
 | `stddev()` returns the variance | Only orders datasets for single-gene queries | kept as is |
 | Two PCL files listed twice in `dataset_list.txt` | GSE113118 and GSE137261 counted twice | fix the list |
+
+## License
+
+MIT; see [LICENSE](LICENSE).
