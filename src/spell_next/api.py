@@ -143,6 +143,8 @@ def load_config():
             'SELECT species FROM datasets WHERE species IS NOT NULL GROUP BY species ORDER BY COUNT(*) DESC')]
     cfg = json.loads(row[0]) if row else modconfig.public(modconfig.DEFAULTS)
     cfg.setdefault('assays', modconfig.DEFAULTS['datasets']['assays'])
+    if cfg['mod'].get('id') == modconfig.DEFAULTS['mod']['id']:     # builds made before mod.species existed
+        cfg['mod'].setdefault('species', modconfig.DEFAULTS['mod']['species'])
     return {**cfg, 'species': species}
 
 
