@@ -82,6 +82,8 @@ details.tagfilter summary .chosen { color: var(--text); font-weight: 600; }
 .assay-pick { margin: 8px 0 0; font-size: 14px; }
 .assay-pick select, .ds-tools select { padding: 6px 8px; font: inherit; }
 .tag-actions { display: flex; gap: 8px; }
+.restrict-find { display: flex; align-items: center; gap: 8px; margin: 8px 0 0; font-size: 14px; flex-wrap: wrap; }
+.restrict-find input { flex: 1; min-width: 220px; max-width: 520px; padding: 6px 8px; font: inherit; }
 button.secondary { background: var(--surface); color: var(--text); border: 1px solid var(--border); }
 .ds-tools { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0; }
 .ds-tools > input { flex: 1 1 260px; padding: 8px 10px; font: inherit; color: var(--text);

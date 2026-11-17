@@ -109,9 +109,17 @@ const datasetText = (d) => [d.title, d.first_author, d.authors, d.journal, d.yea
   d.pubmed_id && `PMID ${d.pubmed_id} PMID:${d.pubmed_id} ${d.pubmed_id}`, d.id,
   Array.isArray(d.tags) ? d.tags.join(' ') : (d.tags || '').replaceAll('|', ' '), d.assay]
   .filter(Boolean).join(' ').toLowerCase();
-// Every word of the filter must appear (in any field).
-const datasetMatches = (d, text) => text.toLowerCase().split(/\s+/).filter(Boolean)
-  .every((w) => datasetText(d).includes(w));
+// A list of GEO series or PubMed IDs ("GSE302334 GSE301493", "39565215, 38124683") matches datasets with any of
+// them; otherwise every word of the filter must appear (in any field).
+const DATASET_ID_WORD = /^(gse\d+|(pmid:?)?\d{5,})$/;
+const datasetMatches = (d, text) => {
+  const words = text.toLowerCase().split(/[\s,;]+/).filter(Boolean);
+  if (words.length > 1 && words.every((w) => DATASET_ID_WORD.test(w))) {
+    const ids = new Set(words.map((w) => w.replace(/^pmid:?/, '')));
+    return ids.has((d.geo_id || '').toLowerCase()) || ids.has(String(d.pubmed_id || ''));
+  }
+  return words.every((w) => datasetText(d).includes(w));
+};
 
 function bar(text, fraction) {
   return cell(`<div class="bar"><span>${esc(text)}</span>
@@ -244,10 +252,14 @@ function tagFilterHtml(what, f) {
   const chosen = [f.assay, f.tags.length ? `${f.tags.length > 1 ? 'tags' : 'tag'}: ${named}` : '',
     f.find ? `matching “${f.find}”` : ''].filter(Boolean).join('; ');
   return `<details class="tagfilter">
-      <summary title="${esc([f.assay, f.tags.join(', ')].filter(Boolean).join('; '))}">Restrict the ${what} to an
-        assay or to datasets with these tags${chosen ? ` <span class="chosen">(${esc(chosen)})</span>` : ''}
+      <summary title="${esc([f.assay, f.tags.join(', '), f.find].filter(Boolean).join('; '))}">Restrict the ${what}
+        to an assay, to datasets with these tags${what === 'search' ? ', or to datasets you list' : ''}${
+        chosen ? ` <span class="chosen">(${esc(chosen)})</span>` : ''}
       </summary>
-      <div id="assay-panel" class="assay-pick"></div>
+      <div id="assay-panel" class="assay-pick"></div>${what === 'search' ? `
+      <label class="restrict-find">Only datasets matching
+        <input type="search" id="restrict-find" value="${esc(f.find)}"
+          placeholder="title words, or a list of GEO / PubMed IDs, e.g. GSE302334 GSE301493"></label>` : ''}
       <div id="tag-panel" class="tag-picker"><p class="loading">Loading tags…</p></div>
       <div class="tag-actions"><button type="button" id="tags-apply">Apply</button>
         <button type="button" id="tags-clear" class="secondary">Clear</button></div>
@@ -264,7 +276,8 @@ function tagFilter(f, hashFor) {
   }).catch(() => {});
   const assay = () => (document.getElementById('assay-select') || { value: f.assay }).value;
   document.getElementById('tags-apply').addEventListener('click', () => {
-    location.hash = hashFor({ tags: [...picked], assay: assay(), find: f.find });
+    location.hash = hashFor({ tags: [...picked], assay: assay(),
+      find: (document.getElementById('restrict-find') || { value: f.find }).value.trim() });
   });
   document.getElementById('tags-clear').addEventListener('click', () => { location.hash = hashFor(NO_FILTER); });
 }
@@ -362,7 +375,7 @@ function renderResults(r, query) {
       (no co-expression search)</p>
     ${tagFilterHtml('search', resultFilter(r))}
     <div class="ds-tools"><input type="search" id="results-filter" aria-label="Find a dataset in these results"
-      placeholder="Find a dataset in these results: title, author, GEO or PubMed ID…"></div>
+      placeholder="Find a dataset in these results: title, author, or GEO / PubMed ID(s)…"></div>
     <p class="sub" id="results-count" hidden></p>
     <h2>Expression in the most informative datasets</h2>
     <div id="heatmaps"></div>
@@ -742,7 +755,7 @@ async function showListing(query, filter = NO_FILTER) {
       <a id="to-search" href="${searchHash(query, filter)}">search for co-expressed genes</a>.</p>
     ${tagFilterHtml('listing', filter)}
     <div class="ds-tools"><input type="search" id="listing-filter" aria-label="Find a dataset"
-      placeholder="Find a dataset: title, author, GEO or PubMed ID…" value="${esc(filter.find)}"></div>
+      placeholder="Find a dataset: title, author, or GEO / PubMed ID(s)…" value="${esc(filter.find)}"></div>
     <p class="sub" id="listing-count" hidden></p>
     <h2>Expression</h2>
     <div id="heatmaps"></div>
@@ -814,8 +827,10 @@ async function showHelp() {
       <a href="#/datasets">Datasets</a> page and search there. A dataset is used if it is of the chosen assay
       and carries any selected tag. Tags are ${esc(MOD())} keywords, grouped by category; hover over a tag for its
       definition. <i>Sort</i> lists them by how many datasets carry them, or alphabetically. Text typed in the
-      Datasets page filter (a title word, author, GEO or PubMed ID) restricts a search from that page too, to the
-      datasets listed. On a results page, <i>Find a dataset in these results</i> narrows the datasets shown without
+      Datasets page filter (title words, an author, or a GEO or PubMed ID) restricts a search from that page too,
+      to the datasets listed. A list of GEO series or PubMed IDs (e.g. <i>GSE302334 GSE301493</i> or
+      <i>39565215 38124683</i>) picks every dataset with any of them, so you can search just the datasets you
+      care about. On a results page, <i>Find a dataset in these results</i> narrows the datasets shown without
       searching again.
       Unlike the original SPELL, which searched every dataset and only hid the others from the list, the search
       itself is limited to the tagged datasets, so the gene ranking reflects only them.</p>
@@ -927,7 +942,7 @@ async function showDatasets(filter = NO_FILTER) {
       ${multiSpecies() ? `<select id="ds-species" aria-label="Species"><option value="">All species</option>${
         CONFIG.species.map((sp) => `<option>${esc(sp)}</option>`).join('')}</select>` : ''}
       <input type="search" id="ds-filter" aria-label="Filter datasets" value="${esc(filter.find)}"
-        placeholder="Filter by title, author, GEO or PubMed ID…">
+        placeholder="Filter by title, author, or GEO / PubMed ID(s)…">
       <form id="ds-search" class="search">
         <input type="search" id="ds-genes" placeholder="Gene name(s) to search in the selected datasets"
           aria-label="Genes to search in the selected datasets">
@@ -940,8 +955,7 @@ async function showDatasets(filter = NO_FILTER) {
     theme: GRID_THEME,
     rowData: datasets,
     columnDefs: [
-      { headerName: 'Dataset', field: 'title', flex: 2, minWidth: 280, getQuickFilterText: (c) => datasetText(c.data),
-        cellRenderer: (c) => cell(
+      { headerName: 'Dataset', field: 'title', flex: 2, minWidth: 280, cellRenderer: (c) => cell(
         `<div class="clamp1"><a href="#/dataset/${c.data.id}" title="${esc(c.value)}">${esc(c.value)}</a></div>
          <span class="sub">${c.data.display_only ? '<span class="flag" title="No expression data in SPELL; not used ' +
            'in searches">display only</span> ' : ''}${
@@ -970,10 +984,12 @@ async function showDatasets(filter = NO_FILTER) {
     rowHeight: 60,
     suppressCellFocus: true,
     enableCellTextSelection: true,
-    isExternalFilterPresent: () => selected.size > 0 || speciesFilter() !== '' || assayFilter() !== '',
+    isExternalFilterPresent: () => selected.size > 0 || speciesFilter() !== '' || assayFilter() !== ''
+      || findText() !== '',
     doesExternalFilterPass: (node) => (selected.size === 0 || node.data.tags.some((t) => selected.has(t)))
       && (speciesFilter() === '' || node.data.species === speciesFilter())
-      && (assayFilter() === '' || node.data.assay === assayFilter()),
+      && (assayFilter() === '' || node.data.assay === assayFilter())
+      && (findText() === '' || datasetMatches(node.data, findText())),
     onModelUpdated: (e) => {
       document.getElementById('ds-count').textContent =
         `${e.api.getDisplayedRowCount()} of ${datasets.length} datasets shown`;
@@ -988,11 +1004,11 @@ async function showDatasets(filter = NO_FILTER) {
   if (speciesBox) speciesBox.addEventListener('change', () => grid.onFilterChanged());
   const assayBox = document.getElementById('ds-assay');
   if (assayBox) assayBox.addEventListener('change', filterChanged);
-  document.getElementById('ds-filter').addEventListener('input', (e) => {
-    grid.setGridOption('quickFilterText', e.target.value);
-    history.replaceState(null, '', `#/datasets${filterQs(current())}`);
+  let findTimer = null;
+  document.getElementById('ds-filter').addEventListener('input', () => {
+    clearTimeout(findTimer);
+    findTimer = setTimeout(filterChanged, 200);
   });
-  if (filter.find) grid.setGridOption('quickFilterText', filter.find);
   document.getElementById('ds-search').addEventListener('submit', (e) => {
     e.preventDefault();
     const q = document.getElementById('ds-genes').value.trim();
