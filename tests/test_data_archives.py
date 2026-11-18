@@ -53,7 +53,11 @@ def test_one_archive_per_assay_and_channel_count(built):
     assert [(a['file'], a['datasets']) for a in manifest] == [
         ('tm_2-channel_microarray.tar.gz', 1), ('tm_microarray.tar.gz', 1), ('tm_RNA-seq.tar.gz', 2)]
     with tarfile.open(out / 'downloads' / 'tm_RNA-seq.tar.gz') as tar:
-        assert sorted(tar.getnames()) == ['tm_RNA-seq/A_set0.pcl', 'tm_RNA-seq/B_set0.pcl', 'tm_RNA-seq/datasets.tsv']
+        assert sorted(tar.getnames()) == ['tm_RNA-seq/A_set0.pcl', 'tm_RNA-seq/B_set0.pcl', 'tm_RNA-seq/README.txt',
+                                          'tm_RNA-seq/datasets.tsv']
+        readme = tar.extractfile('tm_RNA-seq/README.txt').read().decode()
+        assert readme.startswith('TM SPELL expression data: RNA-seq\n')
+        assert 'the 2 RNA-seq datasets searched by TM SPELL' in readme.replace('\n', ' ')
         assert tar.extractfile('tm_RNA-seq/A_set0.pcl').read() == (raw / 'expression' / 'A_set0.pcl').read_bytes()
         table = list(csv.DictReader(io.StringIO(tar.extractfile('tm_RNA-seq/datasets.tsv').read().decode()),
                                     delimiter='\t'))

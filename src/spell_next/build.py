@@ -210,6 +210,59 @@ ARCHIVE_COLUMNS = ['dataset_id', 'filename', 'geo_id', 'pubmed_id', 'title', 'fi
                    'tags', 'assay', 'value_type', 'channels', 'conditions', 'genes']
 
 
+ARCHIVE_README = """{mod} SPELL expression data: {label}
+
+This archive holds the expression data of the {count}
+searched by {mod} SPELL, built {built}. It is rewritten whenever SPELL's data changes;
+the current version is on the About page of {mod} SPELL.
+
+Contents
+--------
+- One file per dataset in PCL format, exactly as loaded into SPELL.
+- datasets.tsv: one row per dataset, with
+    dataset_id     SPELL dataset ID
+    filename       the dataset's PCL file in this archive
+    geo_id         GEO series accession (GSE)
+    pubmed_id      PubMed ID of the publication
+    title, first_author, year, journal
+                   the publication
+    tags           keywords describing the experiment, separated by |
+    assay          microarray or RNA-seq
+    value_type     what the values are, e.g. log2 ratio, log2 intensity, log2 TMM CPM, log2 TPM
+    channels       1 or 2, for microarrays
+    conditions     number of samples (columns)
+    genes          number of genes measured
+
+PCL format
+----------
+Tab-delimited text with one row per gene. The first row holds the column headers: the gene's
+systematic name, its name, GWEIGHT, then one column per condition. The second row (EWEIGHT)
+holds condition weights and can be ignored. Missing values are empty cells.
+
+Values
+------
+Values are as supplied by the authors or processed by {mod} curators, on a log scale (see
+value_type). Units differ between datasets, so compare values within a dataset rather than
+across datasets. SPELL may further normalise some datasets when it builds its search index;
+those adjustments are not applied to these files.
+
+Citation
+--------
+Please cite the original publication for each dataset (pubmed_id in datasets.tsv), and for SPELL:
+Hibbs MA, Hess DC, Myers CL, Huttenhower C, Li K, Troyanskaya OG. Exploring the functional
+landscape of gene expression: directed search of large microarray compendia. Bioinformatics
+2007;23(20):2692-2699.
+{contact}"""
+
+
+def archive_readme(cfg, label, n, built):
+    """README.txt for one archive, from ARCHIVE_README."""
+    contact = cfg['mod'].get('contact')
+    return ARCHIVE_README.format(mod=cfg['mod']['id'], label=label, built=built,
+                                 count='%d %s dataset%s' % (n, label, '' if n == 1 else 's'),
+                                 contact='\nQuestions: %s\n' % contact if contact else '')
+
+
 def archive_groups(comp, datasets, assays):
     """Searched datasets grouped by assay and, for microarrays, channel count: [(group, [Dataset])].
 
@@ -230,12 +283,13 @@ def archive_label(assay, channels):
 
 
 def write_data_archives(raw_dir, out_dir, cfg, comp, datasets):
-    """Write downloads/<mod>_<group>.tar.gz (the expression files as loaded, plus datasets.tsv) for each
+    """Write downloads/<mod>_<group>.tar.gz (the expression files as loaded, datasets.tsv, README.txt) for each
     archive group, and downloads/manifest.json listing them; rebuilt with every build."""
     t0 = time.time()
     folder = os.path.join(out_dir, 'downloads')
     os.makedirs(folder, exist_ok=True)
     mod = cfg['mod']['id'].lower()
+    built = time.strftime('%Y-%m-%d')
     manifest = []
     for (assay, channels), members in archive_groups(comp, datasets, cfg['datasets']['assays']):
         label = archive_label(assay, channels)
@@ -249,10 +303,12 @@ def write_data_archives(raw_dir, out_dir, cfg, comp, datasets):
                                   for c in ARCHIVE_COLUMNS) + '\n')
         path = os.path.join(folder, stem + '.tar.gz')
         with tarfile.open(path, 'w:gz', compresslevel=6) as tar:
-            data = table.getvalue().encode()
-            info = tarfile.TarInfo('%s/datasets.tsv' % stem)
-            info.size, info.mtime = len(data), int(time.time())
-            tar.addfile(info, io.BytesIO(data))
+            for name, text in (('README.txt', archive_readme(cfg, label, len(members), built)),
+                               ('datasets.tsv', table.getvalue())):
+                data = text.encode()
+                info = tarfile.TarInfo('%s/%s' % (stem, name))
+                info.size, info.mtime = len(data), int(time.time())
+                tar.addfile(info, io.BytesIO(data))
             for ds in members:
                 tar.add(os.path.join(raw_dir, 'expression', ds.filename), '%s/%s' % (stem, ds.filename))
         manifest.append({'file': stem + '.tar.gz', 'label': label, 'assay': assay, 'channels': channels,
