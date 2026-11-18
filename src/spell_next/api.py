@@ -49,6 +49,7 @@ async def lifespan(app):
     state['config'] = load_config()
     state['assay_cols'] = assay_columns()
     state['precomputed'] = precomputed()
+    state['archives'] = data_archives()
     state['log'] = SearchLog(LOG_DIR or None)
     yield
     state.clear()
@@ -124,6 +125,15 @@ def precomputed():
     with db() as con:
         row = con.execute("SELECT value FROM build_info WHERE key = 'precomputed'").fetchone()
     return row is None or row[0] == '1'
+
+
+def data_archives():
+    """The build's downloadable expression archives (downloads/manifest.json), or [] if it has none."""
+    try:
+        with open(DATA_DIR / 'downloads' / 'manifest.json') as fh:
+            return json.load(fh)
+    except FileNotFoundError:
+        return []
 
 
 def assay_columns():
@@ -355,8 +365,8 @@ def info():
     """Counts and data versions for the help and about pages."""
     with db() as con:
         has = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-        versions = {k: v for k, v in con.execute('SELECT key, value FROM build_info') if k.startswith('go_')} \
-            if 'build_info' in has else {}
+        build_info = dict(con.execute('SELECT key, value FROM build_info').fetchall()) if 'build_info' in has else {}
+        versions = {k: v for k, v in build_info.items() if k.startswith('go_')}
         qc = dict(con.execute("SELECT scale, COUNT(*) FROM dataset_qc GROUP BY scale").fetchall()) \
             if 'dataset_qc' in has else {}
         flagged = con.execute("SELECT COUNT(*) FROM dataset_qc WHERE warnings != ''").fetchone()[0] \
@@ -379,6 +389,8 @@ def info():
             'versions': versions,
             'max_query_genes': MAX_QUERY_GENES,
             'precomputed': state['precomputed'],
+            'data_archives': [{k: a[k] for k in ('file', 'label', 'datasets', 'bytes')} for a in state['archives']],
+            'built': build_info.get('built'),
         }
 
 
@@ -414,6 +426,14 @@ def download(name: str):
     return Response(cache[name], media_type='application/gzip',
                     headers={'Content-Disposition': 'attachment; filename="%s_%s"' % (
                         state['config']['mod']['id'].lower(), name)})
+
+
+@app.get('/api/downloads/data/{name}')
+def data_archive(name: str):
+    """One of the build's expression archives: the expression files of every searched dataset of an assay."""
+    if name not in {a['file'] for a in state['archives']}:
+        raise HTTPException(404, 'unknown download')
+    return FileResponse(DATA_DIR / 'downloads' / name, media_type='application/gzip', filename=name)
 
 
 @app.get('/api/assays')

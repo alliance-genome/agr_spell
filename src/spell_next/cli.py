@@ -431,6 +431,8 @@ def read_metadata_table(path):
     out = {}
     for row in csv.DictReader(io.StringIO(text), delimiter=delimiter):
         row = {(k or '').strip().lower(): re.sub(r'[\t\r\n]+', ' ', (v or '')).strip() for k, v in row.items()}
+        if 'channels' not in row and 'channel' in row:
+            row['channels'] = row.pop('channel')
         name = os.path.basename(row.get('filename') or '')
         if name:
             out[name] = row
@@ -515,7 +517,7 @@ def cmd_add_datasets(args):
         cols = next(csv.reader(fh, delimiter='\t'), None) or []
     header = list(cols)
     for c in ('filename', 'geo_id', 'pubmed_id', 'title', 'description', 'first_author', 'authors', 'journal',
-              'year', 'tags', 'assay', 'value_type'):
+              'year', 'tags', 'assay', 'value_type', 'channels'):
         if c not in cols:
             cols.append(c)
     rows, lines, notes = [], [], []
@@ -573,7 +575,8 @@ def cmd_add_datasets(args):
             csv.DictWriter(fh, cols, delimiter='\t', lineterminator='\n').writerows(rows)
     print('\nAdded %d datasets (IDs %d-%d) to dataset_list.txt and %s (backups kept as *.bak-*).'
           % (len(files), min(ids.values()), max(ids.values()), cfg['datasets']['metadata']))
-    print('Next: check the new rows (add tags; set value_type for RNA-seq), then validate and rebuild.')
+    print('Next: check the new rows (add tags; set value_type for RNA-seq, channels for microarrays), then '
+          'validate and rebuild.')
     return 0
 
 

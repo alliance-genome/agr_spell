@@ -68,6 +68,9 @@ DEFAULTS = {
         # Precompute every gene's single-gene result (instant answers). Needs memory for a genes x genes
         # matrix, so very large MODs (e.g. WormBase's 300,000 genes) turn it off and search live instead.
         'precompute': True,
+        # Offer every searched dataset's expression file for download as one .tar.gz per assay (microarrays
+        # split by the dataset table's channels column), written with each build.
+        'data_archives': False,
     },
 }
 
@@ -124,8 +127,9 @@ def validate(cfg):
             raise ConfigError('links.keyword may only use {%s}: %s' % ('}, {'.join(KEYWORD_LINK_FIELDS), err))
     if not isinstance(cfg['mod']['examples'], list):
         raise ConfigError('mod.examples must be a list of queries')
-    if not isinstance(cfg['build']['precompute'], bool):
-        raise ConfigError('build.precompute must be true or false')
+    for key in ('precompute', 'data_archives'):
+        if not isinstance(cfg['build'][key], bool):
+            raise ConfigError('build.%s must be true or false' % key)
     assays = cfg['datasets']['assays']
     if not isinstance(assays, list) or not all(isinstance(a, str) and a for a in assays):
         raise ConfigError('datasets.assays must be a list of assay names')

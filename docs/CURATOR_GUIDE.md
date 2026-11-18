@@ -169,6 +169,7 @@ prints the next free ID) and a row in `datasets.tsv`.
 | `tags` | SGD keywords, separated by `\|`, e.g. `stress\|heat shock` |
 | `assay` | `microarray` or `RNA-seq` |
 | `value_type` | What the values are (section 3.2) |
+| `channels` | `1` or `2` for microarrays (one- or two-channel arrays); sorts them into the downloads |
 | `links` | Extra links shown on the dataset page, as `label <url> \| label <url>` (optional) |
 | `display_only` | `yes` for a dataset shown for reference without expression data (optional, see below) |
 | `dataset_id`, `species` | Needed only for display-only datasets (they are not in `dataset_list.txt`) |
@@ -236,6 +237,9 @@ About a rebuild:
   added, 99 removed; 0 genes have more than 2 of their top-10 hits changed"). A big change in
   top hits after only a metadata edit means something went wrong.
 - **The last 3 builds are kept**, so a rollback is instant.
+- **It also rewrites the downloads** on the About page: all 2-channel microarray, 1-channel
+  microarray and RNA-seq data, each a `.tar.gz` of the expression files with a `datasets.tsv`.
+  Microarrays without `channels` go into a separate "microarray" download; validate lists them.
 
 After a rebuild, check:
 

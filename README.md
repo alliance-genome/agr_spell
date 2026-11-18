@@ -79,6 +79,7 @@ SGD defaults apply. Templates: `configs/sgd.toml`, `configs/wb.example.toml`.
 | `[genes]` | Gene names file: `sgd_features` (SGD_features.tab) or `gene_table` |
 | `[datasets]` | Dataset metadata: `spell_dump` (old SPELL export) or `dataset_table` |
 | `[go]` | GO ontology and one or more GAF files (matched on GAF column 2 = `mod_id`) |
+| `[build]` | `precompute` (single-gene results, default on); `data_archives` (one `.tar.gz` of expression files per assay on the About page, default off) |
 
 `gene_table` is a tab-separated file with a header row: `systematic` (required; the
 name used in the PCL files), `mod_id`, `standard`, `aliases` (`|`-separated),
@@ -86,7 +87,7 @@ name used in the PCL files), `mod_id`, `standard`, `aliases` (`|`-separated),
 `geo_id`, `pubmed_id`, `title`, `description`, `first_author`, `authors`, `journal`,
 `year`, `tags` (`|`-separated), `assay` (one of `[datasets] assays`, by default
 `microarray` or `RNA-seq`) and `value_type` (what the values are, e.g. `log2 TMM CPM`,
-`log2 TPM`, `vst`, `log2 ratio`), and optionally `links` (`label <url> | label <url>`) and, for datasets
+`log2 TPM`, `vst`, `log2 ratio`), and optionally `channels` (`1` or `2`, for microarrays), `links` (`label <url> | label <url>`) and, for datasets
 shown without expression data, `display_only` (`yes`), `dataset_id` and `species`. An optional keyword list (`[datasets] keywords`, columns
 `display_name`, `category`, `description`, `format_name`) groups tags by category in the tag
 picker, shows definitions, links tags via `[links] keyword`, and lets `spell validate` flag

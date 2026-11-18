@@ -19,6 +19,7 @@ import json
 import os
 import re
 import sqlite3
+import tarfile
 import time
 from collections import Counter
 from concurrent.futures import ProcessPoolExecutor
@@ -169,6 +170,7 @@ def read_dataset_dump(path):
                 'first_author': f[5], 'authors': f[6], 'journal': f[8],
                 'year': int(f[9]) if f[9].isdigit() else None,
                 'tags': f[10], 'geo_id': None,
+                'channels': int(f[11]) if len(f) > 11 and f[11] in ('1', '2') else None,    # microarrays
             }
     return out
 
@@ -178,8 +180,8 @@ def read_dataset_table(path):
 
     Columns (only ``filename`` is required): filename, geo_id, pubmed_id, title,
     description, first_author, authors, journal, year, tags ('|'-separated), assay,
-    value_type, links ('label <url> | label <url>'), and for datasets shown without expression
-    data, display_only (yes), dataset_id and species.
+    value_type, channels (1 or 2, for microarrays), links ('label <url> | label <url>'), and for
+    datasets shown without expression data, display_only (yes), dataset_id and species.
     """
     out = {}
     with open(path, newline='', errors='replace') as fh:
@@ -197,10 +199,68 @@ def read_dataset_table(path):
                 'journal': get('journal'), 'tags': get('tags'),
                 'assay': get('assay'), 'value_type': get('value_type'), 'links': get('links'),
                 'species': get('species'),
+                'channels': int(get('channels')) if get('channels') in ('1', '2') else None,
                 'display_only': (get('display_only') or '').lower() in ('yes', 'y', 'true', '1'),
                 'dataset_id': int(get('dataset_id')) if (get('dataset_id') or '').isdigit() else None,
             }
     return out
+
+
+ARCHIVE_COLUMNS = ['dataset_id', 'filename', 'geo_id', 'pubmed_id', 'title', 'first_author', 'year', 'journal',
+                   'tags', 'assay', 'value_type', 'channels', 'conditions', 'genes']
+
+
+def archive_groups(comp, datasets, assays):
+    """Searched datasets grouped by assay and, for microarrays, channel count: [(group, [Dataset])].
+
+    group = (assay, channels); assays follow the config's order, two-channel arrays before one-channel.
+    """
+    groups = {}
+    for ds in comp.datasets:
+        m = datasets.get(ds.filename) or {}
+        groups.setdefault((m.get('assay'), m.get('channels')), []).append(ds)
+    order = {a: i for i, a in enumerate(assays)}
+    return sorted(groups.items(), key=lambda kv: (order.get(kv[0][0], len(order)), kv[0][0] or '',
+                                                   -(kv[0][1] or 0)))
+
+
+def archive_label(assay, channels):
+    """'2-channel microarray', 'RNA-seq', or 'other' for datasets without an assay."""
+    return ('%d-channel %s' % (channels, assay)) if channels else (assay or 'other')
+
+
+def write_data_archives(raw_dir, out_dir, cfg, comp, datasets):
+    """Write downloads/<mod>_<group>.tar.gz (the expression files as loaded, plus datasets.tsv) for each
+    archive group, and downloads/manifest.json listing them; rebuilt with every build."""
+    t0 = time.time()
+    folder = os.path.join(out_dir, 'downloads')
+    os.makedirs(folder, exist_ok=True)
+    mod = cfg['mod']['id'].lower()
+    manifest = []
+    for (assay, channels), members in archive_groups(comp, datasets, cfg['datasets']['assays']):
+        label = archive_label(assay, channels)
+        stem = '%s_%s' % (mod, re.sub(r'[^A-Za-z0-9.-]+', '_', label))
+        table = io.StringIO()
+        table.write('\t'.join(ARCHIVE_COLUMNS) + '\n')
+        for ds in members:
+            m = dict(datasets.get(ds.filename) or {})
+            m.update(dataset_id=ds.id, filename=ds.filename, conditions=ds.num_conds, genes=len(ds.gene_index))
+            table.write('\t'.join(re.sub(r'[\t\r\n]+', ' ', str(m.get(c) if m.get(c) is not None else ''))
+                                  for c in ARCHIVE_COLUMNS) + '\n')
+        path = os.path.join(folder, stem + '.tar.gz')
+        with tarfile.open(path, 'w:gz', compresslevel=6) as tar:
+            data = table.getvalue().encode()
+            info = tarfile.TarInfo('%s/datasets.tsv' % stem)
+            info.size, info.mtime = len(data), int(time.time())
+            tar.addfile(info, io.BytesIO(data))
+            for ds in members:
+                tar.add(os.path.join(raw_dir, 'expression', ds.filename), '%s/%s' % (stem, ds.filename))
+        manifest.append({'file': stem + '.tar.gz', 'label': label, 'assay': assay, 'channels': channels,
+                         'datasets': len(members), 'bytes': os.path.getsize(path)})
+    with open(os.path.join(folder, 'manifest.json'), 'w') as fh:
+        json.dump(manifest, fh, indent=1)
+    print('downloads: %s (%.0fs)' % (', '.join('%s %d datasets' % (a['label'], a['datasets']) for a in manifest),
+                                     time.time() - t0))
 
 
 def read_keywords(path):
@@ -442,8 +502,8 @@ def run_build(raw_dir, out_dir, workers=None, limit=None, no_qc=False, centre=Fa
     if os.path.exists(db_path):
         os.remove(db_path)
     db = sqlite3.connect(db_path)
-    write_metadata(db, comp, read_gene_info(raw_dir, cfg), read_dataset_info(raw_dir, cfg),
-                   cfg['genes'].get('default_species'))
+    datasets = read_dataset_info(raw_dir, cfg)
+    write_metadata(db, comp, read_gene_info(raw_dir, cfg), datasets, cfg['genes'].get('default_species'))
     write_keywords(db, raw_dir, cfg)
     db.executemany('INSERT OR REPLACE INTO build_info VALUES (?,?)',
                    [('config', json.dumps(modconfig.public(cfg))), ('mod', cfg['mod']['id']),
@@ -455,6 +515,8 @@ def run_build(raw_dir, out_dir, workers=None, limit=None, no_qc=False, centre=Fa
     print('species: ' + ', '.join('%s (%d datasets)' % s for s in species))
 
     write_go_tables(db, raw_dir, cfg)
+    if cfg['build']['data_archives']:
+        write_data_archives(raw_dir, out_dir, cfg, comp, datasets)
 
     if not no_qc:
         apply_qc(db, comp, workers, centre=centre)

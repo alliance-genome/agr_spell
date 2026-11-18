@@ -248,6 +248,14 @@ def _check_metadata(report, raw_dir, cfg, gene_names, filenames):
                    '%d datasets have no metadata title (shown by file name): %s%s'
                    % (len(missing), ', '.join(missing[:5]), ' …' if len(missing) > 5 else ''))
     _check_assays(report, cfg, meta, filenames)
+    if cfg['build']['data_archives']:
+        no_channels = [f for f in filenames if (meta.get(f) or {}).get('assay') == 'microarray'
+                       and not meta[f].get('channels')]
+        if no_channels:
+            report.add('warning', cfg['datasets']['metadata'] or 'datasets',
+                       '%d microarray datasets have no channels (1 or 2), so the downloads list them apart from '
+                       'the 1- and 2-channel arrays: %s%s' % (len(no_channels), ', '.join(no_channels[:3]),
+                                                             ' …' if len(no_channels) > 3 else ''))
     _check_keywords(report, raw_dir, cfg, meta, filenames)
     display = {f: m for f, m in meta.items() if m.get('display_only')}
     listed_ids = {d['dataset_id'] for d in report.datasets}

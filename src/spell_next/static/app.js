@@ -877,10 +877,13 @@ async function showHelp() {
   </article>`;
 }
 
+const megabytes = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)} GB` : `${Math.max(1, Math.round(n / 1e6))} MB`);
+
 async function showAbout() {
   app.innerHTML = '<p class="loading">Loading…</p>';
   const i = await api('/api/info').catch(() => ({ versions: {} }));
   const v = i.versions || {};
+  const archives = i.data_archives || [];
   const titleSearch = 'https://pubmed.ncbi.nlm.nih.gov/?term=' + encodeURIComponent(
     'Exploring the functional landscape of gene expression: directed search of large microarray compendia');
   app.innerHTML = `<article class="doc">
@@ -906,15 +909,23 @@ async function showAbout() {
       <dt>Gene Ontology</dt><dd>${esc(v.go_ontology || '—')}</dd>
       <dt>GO annotations</dt><dd>${esc(MOD())}, ${esc(v.go_annotations || '—')}</dd>
     </dl>
-    ${i.precomputed ? `<h2>Downloads</h2>
-    <p>Precomputed single-gene results for every gene, as gzipped tab-separated files:</p>
+    ${i.precomputed || archives.length ? '<h2>Downloads</h2>' : ''}
+    ${archives.length ? `<p>Expression data of all datasets searched, as .tar.gz archives of the data files as
+      loaded (PCL format) with a table of dataset details (datasets.tsv). Updated with every data
+      release${i.built ? `; this one was built ${esc(i.built.slice(0, 10))}` : ''}.</p>
+    <ul>${archives.map((a) => `
+      <li><a href="/api/downloads/data/${encodeURIComponent(a.file)}" download>All ${esc(a.label)} data</a>
+        (${esc(a.datasets)} datasets, ${esc(megabytes(a.bytes))})</li>`).join('')}
+    </ul>` : ''}
+    ${i.precomputed ? `<p>Precomputed single-gene results for every gene, as gzipped tab-separated files:</p>
     <ul>
       <li><a href="/api/downloads/coexpression_genes.tsv.gz" download>Top 100 co-expressed genes</a> of each gene
         (query, rank, co-expressed gene, score)</li>
       <li><a href="/api/downloads/coexpression_datasets.tsv.gz" download>Top 100 most informative datasets</a>
         for each gene (query, rank, dataset, weight in percent)</li>
-    </ul>
-    <p class="sub">Each dataset's expression data can be downloaded from its dataset page.</p>` : ''}
+    </ul>` : ''}
+    ${i.precomputed || archives.length ? `<p class="sub">Each dataset's expression data can be downloaded from its
+      dataset page.</p>` : ''}
     <h2>Credits</h2>
     <p>The original SPELL was developed by the Troyanskaya lab at Princeton University and the Hibbs lab at The
       Jackson Laboratory, and was run by SGD (spell.yeastgenome.org) and WormBase (spell.wormbase.org).

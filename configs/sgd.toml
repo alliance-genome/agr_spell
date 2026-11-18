@@ -36,6 +36,11 @@ keywords = "meta/keywords.csv"
 obo = "meta/go-basic.obo"
 gaf = ["meta/gene_association.sgd.gaf.gz"]
 
+[build]
+# Offer all expression data on the About page: one .tar.gz per assay, microarrays split by
+# the dataset table's channels column. Rewritten with every rebuild.
+data_archives = true
+
 [updates]
 # Reference files refreshed by `spell update-refs` (weekly via `spellctl update sgd` from cron).
 # Paths are relative to the raw data directory; a file is replaced only if its download passes checks.
