@@ -24,6 +24,37 @@ SGD dev: **https://spell.dev.yeastgenome.org/** (public). How it is wired:
 | Routing | listener rule 75: host `spell.dev.yeastgenome.org` → target group `spell-dev` (instance port 8001, health check `/api/info`) |
 | Instance | `deploy/.env` sets `SPELL_BIND=0.0.0.0`; security group `spell-dev-from-alb` allows 8001 only from the load balancer |
 
+### Several MODs behind one port (nginx)
+
+When one load balancer serves every MOD's hostname, run the `proxy` service instead of
+opening each app's port: nginx listens on port 80 and sends each request to the MOD's
+container by hostname (`deploy/nginx/spell.conf`). The apps keep `SPELL_BIND` at its default
+(localhost), so only port 80 needs to be open to the load balancer.
+
+| Hostname prefix | Container |
+| --- | --- |
+| `sgd-spell.` (e.g. `sgd-spell.alliancegenome.org`) | `spell-sgd` |
+| `wb-spell.` (e.g. `wb-spell.alliancegenome.org`) | `spell-wb` |
+
+Any other hostname gets a 404. A MOD whose app is not running gets a 502; the others are
+unaffected, and nginx finds a recreated container again by itself (no restart needed after
+`./spellctl start`).
+
+Load balancer health checks arrive with the instance IP as the hostname, so each MOD has its
+own health check path: `/health/sgd` and `/health/wb` (each returns that app's
+`/api/info`). Give each MOD's target group instance port 80 and its own path.
+
+| Task | Command |
+| --- | --- |
+| Start nginx (after the apps; restarts on reboot) | `./spellctl proxy start` |
+| Apply an edit to `nginx/spell.conf` (checks it first) | `./spellctl proxy reload` |
+| Follow the access log | `./spellctl proxy logs` |
+
+To add a MOD, add its container to `docker-compose.yml`, its hostname prefix to the `map` and
+a `/health/<mod>` location to `nginx/spell.conf`, then `./spellctl proxy reload`. The port
+nginx listens on is `SPELL_PROXY_PORT` (default 80), bound to `SPELL_PROXY_BIND` (default
+all interfaces).
+
 Without a load balancer, ports stay on localhost. With the instance's SSH key:
 
 ```bash
