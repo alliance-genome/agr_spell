@@ -1,1 +1,1 @@
-"""Prototype replacement for SPELL (Serial Pattern of Expression Levels Locator)."""
+"""Replacement for SPELL (Serial Pattern of Expression Levels Locator)."""

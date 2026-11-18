@@ -304,8 +304,8 @@ function showHome() {
     <p class="sub">To see the expression of genes without a co-expression search, use a listing${listing ?
       `, e.g. <a href="#/expression/${encodeURIComponent(listing)}">${esc(listing)}</a>` : ''}.
       Browse or filter all datasets by topic on the <a href="#/datasets">Datasets</a> page.</p>
-    <p class="sub">Prototype rebuilt from SPELL. Scores use corrected correlation arithmetic, so they can differ
-      from the original SPELL site.</p>`;
+    <p class="sub">Rebuilt from the original SPELL. Scores use corrected correlation arithmetic, so they can
+      differ slightly from the original SPELL site.</p>`;
   api('/api/info').then((i) => {
     const box = document.getElementById('home-counts');
     if (!box || !i.datasets) return;
@@ -891,9 +891,8 @@ async function showAbout() {
     <p>SPELL (Serial Pattern of Expression Levels Locator) is a query-driven search engine for large gene
       expression compendia. Given a set of query genes, it weights each dataset by how well the query genes are
       co-expressed in it, then ranks every other gene by its weighted correlation with the query. Negative
-      correlations are treated as no correlation. This prototype re-implements SPELL in Python with a new web
-      interface for ${esc(CONFIG.mod.name)}, as a candidate for hosting within the Alliance of Genome
-      Resources.</p>
+      correlations are treated as no correlation. This version re-implements SPELL in Python with a new web
+      interface for ${esc(CONFIG.mod.name)}, hosted by the Alliance of Genome Resources.</p>
     <h2>Citation</h2>
     <p>The SPELL algorithm is described in: Hibbs MA, et al. Exploring the functional landscape of gene
       expression: directed search of large microarray compendia. <i>Bioinformatics</i>, 2007.
@@ -1121,7 +1120,9 @@ window.addEventListener('hashchange', route);
   try {
     CONFIG = await api('/api/config');
   } catch (err) { /* keep defaults; pages still work without branding */ }
-  document.querySelector('.badge').textContent = `${MOD()} prototype`.trim();
+  const badge = document.querySelector('.badge');
+  badge.textContent = CONFIG.mod.badge ? `${MOD()} ${CONFIG.mod.badge}`.trim() : '';
+  badge.hidden = !CONFIG.mod.badge;
   document.title = `${CONFIG.mod.site_title || 'SPELL next'}${MOD() ? ' · ' + MOD() : ''}`;
   const ex = CONFIG.mod.examples || [];
   if (ex.length) {

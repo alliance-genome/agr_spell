@@ -155,6 +155,7 @@ def load_config():
     cfg.setdefault('assays', modconfig.DEFAULTS['datasets']['assays'])
     if cfg['mod'].get('id') == modconfig.DEFAULTS['mod']['id']:     # builds made before mod.species existed
         cfg['mod'].setdefault('species', modconfig.DEFAULTS['mod']['species'])
+    cfg['mod'].setdefault('badge', modconfig.DEFAULTS['mod']['badge'])     # builds made before mod.badge existed
     return {**cfg, 'species': species}
 
 

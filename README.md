@@ -1,6 +1,6 @@
 # spell-next
 
-Prototype replacement for SGD's SPELL co-expression search, written in Python.
+Replacement for SGD's SPELL co-expression search, written in Python.
 `spell_next.search` ports the Spell++ algorithm (ZSCORE2 distance, no orthology,
 as run on spell.yeastgenome.org).
 
@@ -74,7 +74,7 @@ SGD defaults apply. Templates: `configs/sgd.toml`, `configs/wb.example.toml`.
 
 | Section | What it sets |
 | --- | --- |
-| `[mod]` | ID, name, organism, species (home page wording), contact, example queries shown on the home page |
+| `[mod]` | ID, name, organism, species (home page wording), contact, example queries shown on the home page, badge next to the logo (`beta` by default, `""` for none) |
 | `[links]` | Gene page URL template: `{mod_id}`, `{systematic}`, `{standard}` |
 | `[genes]` | Gene names file: `sgd_features` (SGD_features.tab) or `gene_table` |
 | `[datasets]` | Dataset metadata: `spell_dump` (old SPELL export) or `dataset_table` |
@@ -102,7 +102,7 @@ against the annotated genes of its own species. Species columns and filters appe
 the interface only when an instance has more than one species. The resolved config is
 stored in the build, so the web app needs only the build directory.
 
-## Build and run the prototype
+## Build and run
 
 For SGD, `data/raw/meta/` also needs `SGD_features.tab` (from downloads.yeastgenome.org)
 and SPELL's dataset metadata export (`SQLdump*_fordownloadfiles.txt` from the server);

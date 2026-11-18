@@ -46,6 +46,7 @@ def test_config_reaches_the_front_end(client):
     cfg = client.get('/api/config').json()
     assert cfg['mod']['id'] == 'TM' and cfg['mod']['examples'][0] == 'a-1'
     assert cfg['links']['gene'] == 'https://example.org/gene/{mod_id}'
+    assert cfg['mod']['badge'] == 'beta'                           # default; mod.toml can set "" for none
     assert sorted(cfg['species']) == ['Alpha worm', 'Beta worm']
 
 
@@ -128,6 +129,11 @@ def test_bad_config_is_rejected(tmp_path):
     (tmp_path / 'mod.toml').write_text('[links]\ngene = "https://x.org/{sgdid}"\n')
     with pytest.raises(modconfig.ConfigError):
         modconfig.load(str(tmp_path))
+    (tmp_path / 'mod.toml').write_text('[mod]\nbadge = false\n')
+    with pytest.raises(modconfig.ConfigError):
+        modconfig.load(str(tmp_path))
+    (tmp_path / 'mod.toml').write_text('[mod]\nbadge = ""\n')
+    assert modconfig.load(str(tmp_path))['mod']['badge'] == ''
 
 
 def test_precomputed_results_download(client):

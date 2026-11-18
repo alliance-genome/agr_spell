@@ -43,6 +43,7 @@ DEFAULTS = {
         'contact': 'sgd-helpdesk@lists.stanford.edu',
         'examples': ['ACT1', 'GAL1', 'HSP104', 'RPL3 RPL4A RPS2 RPS3', 'CDC28 CLN1 CLN2 CLB5 CLB6'],
         'listing_example': 'GAL1 GAL7 GAL10',
+        'badge': 'beta',                # shown after the MOD's ID next to the logo ("SGD beta"); "" for none
     },
     'links': {
         'gene': 'https://www.yeastgenome.org/locus/{mod_id}',
@@ -125,6 +126,8 @@ def validate(cfg):
             cfg['links']['keyword'].format(**{f: 'x' for f in KEYWORD_LINK_FIELDS})
         except (KeyError, IndexError) as err:
             raise ConfigError('links.keyword may only use {%s}: %s' % ('}, {'.join(KEYWORD_LINK_FIELDS), err))
+    if not isinstance(cfg['mod']['badge'], str):
+        raise ConfigError('mod.badge must be text ("" for no badge)')
     if not isinstance(cfg['mod']['examples'], list):
         raise ConfigError('mod.examples must be a list of queries')
     for key in ('precompute', 'data_archives'):
