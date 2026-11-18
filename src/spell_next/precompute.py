@@ -8,7 +8,9 @@ is vectorised over all genes per dataset. Genes with fewer than 3 usable dataset
 Spell++ switches to equal weights, are delegated to ``search`` itself.
 """
 import math
+import multiprocessing
 from concurrent.futures import ProcessPoolExecutor
+from contextlib import contextmanager
 
 import numpy as np
 
@@ -61,6 +63,26 @@ _comp = None
 def _init(npz_path):
     global _comp
     _comp = Compendium.load(npz_path)
+
+
+@contextmanager
+def _pool(comp, npz_path, workers):
+    """Worker pool with the compendium in every worker.
+
+    Where fork is available the workers inherit the caller's compendium, so its arrays are shared
+    (copy-on-write, and only read) instead of each worker loading its own copy from npz_path.
+    """
+    global _comp
+    if 'fork' not in multiprocessing.get_all_start_methods():
+        with ProcessPoolExecutor(workers, initializer=_init, initargs=(npz_path,)) as pool:
+            yield pool
+        return
+    _comp = comp
+    try:
+        with ProcessPoolExecutor(workers, mp_context=multiprocessing.get_context('fork')) as pool:
+            yield pool
+    finally:
+        _comp = None
 
 
 def _pass1(ds_indices):
@@ -135,7 +157,7 @@ def precompute_all(comp, npz_path, top_genes=100, top_datasets=100, workers=None
     threshold = np.minimum(num_weighted, np.maximum(0.1 * n_kept, 4.0))
     special = num_weighted < 3                                          # Spell++'s equal-weights rule
 
-    with ProcessPoolExecutor(workers, initializer=_init, initargs=(npz_path,)) as pool:
+    with _pool(comp, npz_path, workers) as pool:
         total = np.zeros((n, n))
         used = np.zeros((n, n), dtype=np.int32)
         for t, u in pool.map(_pass1, _chunks(list(range(n_ds)), workers)):
