@@ -17,6 +17,7 @@
 #   ./spellctl logs MOD              follow the app's log
 #   ./spellctl init MOD CONFIG       create MOD's directory from a config template (configs/*.toml)
 #   ./spellctl image                 (re)build the Docker image from this checkout
+#   ./spellctl proxy start|stop|reload|logs   nginx serving every MOD on port 80 (see README)
 #
 # MOD is sgd or wb. Data lives in ${SPELL_DATA_ROOT:-/srv/spell}/MOD.
 set -euo pipefail
@@ -28,7 +29,7 @@ BUILD_CPUS=${SPELL_BUILD_CPUS:-3}          # leave a core for the running apps d
 BUILD_MEM=${SPELL_BUILD_MEM:-10g}
 COMPOSE=(docker compose --profile wb)
 
-usage() { sed -n '2,21p' "$SELF" | sed 's/^# \{0,1\}//'; exit 1; }
+usage() { sed -n '2,22p' "$SELF" | sed 's/^# \{0,1\}//'; exit 1; }
 
 service_of() {
   case "$1" in
@@ -168,6 +169,15 @@ case "$cmd" in
     "${COMPOSE[@]}" "$cmd" "$(service_of "${1:?MOD}")" ;;
   logs)
     "${COMPOSE[@]}" logs -f --tail 100 "$(service_of "${1:?MOD}")" ;;
+  proxy)
+    PROXY=("${COMPOSE[@]}" --profile proxy)
+    case "${1:-}" in
+      start) "${PROXY[@]}" up -d proxy ;;
+      stop) "${PROXY[@]}" stop proxy ;;
+      reload) "${PROXY[@]}" exec proxy nginx -t && "${PROXY[@]}" exec proxy nginx -s reload ;;
+      logs) "${PROXY[@]}" logs -f --tail 100 proxy ;;
+      *) usage ;;
+    esac ;;
   *)
     usage ;;
 esac

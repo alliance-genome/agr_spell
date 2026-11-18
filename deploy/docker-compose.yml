@@ -6,6 +6,10 @@
 # Data on the host (override with SPELL_DATA_ROOT):
 #   ${SPELL_DATA_ROOT:-/srv/spell}/sgd  ->  SGD instance (raw/, builds/, current, logs/)
 #   ${SPELL_DATA_ROOT:-/srv/spell}/wb   ->  WormBase instance (enable with --profile wb)
+#
+# To serve every MOD on one port, run the nginx proxy instead (./spellctl proxy start, profile
+# proxy): it listens on port 80 and picks the app from the hostname (nginx/spell.conf), so the
+# apps' own ports stay on localhost.
 
 x-spell: &spell
   image: spell-next:${SPELL_IMAGE_TAG:-latest}
@@ -36,3 +40,14 @@ services:
       - "${SPELL_BIND:-127.0.0.1}:8002:8000"
     volumes:
       - ${SPELL_DATA_ROOT:-/srv/spell}/wb:/srv/spell
+
+  proxy:
+    image: nginx:${SPELL_NGINX_TAG:-1.28-alpine}
+    container_name: spell-proxy
+    profiles: ["proxy"]
+    restart: unless-stopped
+    ports:
+      - "${SPELL_PROXY_BIND:-0.0.0.0}:${SPELL_PROXY_PORT:-80}:80"
+    volumes:
+      # The directory, not the file: an editor that replaces the file would leave a file mount stale.
+      - ./nginx:/etc/nginx/conf.d:ro
