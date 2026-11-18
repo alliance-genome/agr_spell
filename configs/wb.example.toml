@@ -5,7 +5,7 @@
 [mod]
 id = "WB"
 name = "WormBase"
-site_title = "SPELL next"
+site_title = "WormBase SPELL"
 organism = "nematode"
 species = "C. elegans and other nematode"
 contact = "help@wormbase.org"                 # TODO: confirm the help address

@@ -156,6 +156,7 @@ def load_config():
     if cfg['mod'].get('id') == modconfig.DEFAULTS['mod']['id']:     # builds made before mod.species existed
         cfg['mod'].setdefault('species', modconfig.DEFAULTS['mod']['species'])
     cfg['mod'].setdefault('badge', modconfig.DEFAULTS['mod']['badge'])     # builds made before mod.badge existed
+    cfg['mod']['site_title'] = modconfig.site_title(cfg['mod'])
     return {**cfg, 'species': species}
 
 

@@ -4,7 +4,7 @@
 [mod]
 id = "SGD"
 name = "Saccharomyces Genome Database"
-site_title = "SPELL next"
+site_title = "SGD SPELL"
 organism = "yeast"
 species = "S. cerevisiae"           # home page: "enter a set of S. cerevisiae gene names"
 contact = "sgd-helpdesk@lists.stanford.edu"

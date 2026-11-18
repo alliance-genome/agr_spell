@@ -47,7 +47,14 @@ def test_config_reaches_the_front_end(client):
     assert cfg['mod']['id'] == 'TM' and cfg['mod']['examples'][0] == 'a-1'
     assert cfg['links']['gene'] == 'https://example.org/gene/{mod_id}'
     assert cfg['mod']['badge'] == 'beta'                           # default; mod.toml can set "" for none
+    assert cfg['mod']['site_title'] == 'TM SPELL'                  # derived: TM's config sets none
     assert sorted(cfg['species']) == ['Alpha worm', 'Beta worm']
+
+
+def test_site_title():
+    assert modconfig.site_title({'id': 'WB', 'name': 'WormBase', 'site_title': 'SPELL next'}) == 'WormBase SPELL'
+    assert modconfig.site_title({'id': 'SGD', 'name': 'Saccharomyces Genome Database'}) == 'SGD SPELL'
+    assert modconfig.site_title({'id': 'TM', 'name': 'Test MOD', 'site_title': 'My SPELL'}) == 'My SPELL'
 
 
 def test_hits_stay_within_the_query_species(client):

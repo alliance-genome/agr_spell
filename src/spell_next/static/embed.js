@@ -35,7 +35,7 @@
           title="${esc(d.title)}">${esc(d.title)}</a>
         <span class="score">${d.weight.toFixed(1)}%</span></li>`).join('')}</ol>` : ''}
       <a class="more" href="${full(`#/search/${encodeURIComponent(q.systematic)}`)}" target="_blank"
-        rel="noopener">Full results in SPELL next ↗</a>`;
+        rel="noopener">Full results in SPELL ↗</a>`;
   } catch (err) {
     fail(err.message);
   }

@@ -37,13 +37,13 @@ DEFAULTS = {
     'mod': {
         'id': 'SGD',
         'name': 'Saccharomyces Genome Database',
-        'site_title': 'SPELL next',
+        'site_title': None,            # logo and browser tab; None: '<name> SPELL' (see site_title())
         'organism': 'yeast',
         'species': 'S. cerevisiae',     # for the home page: "enter a set of S. cerevisiae gene names"
         'contact': 'sgd-helpdesk@lists.stanford.edu',
         'examples': ['ACT1', 'GAL1', 'HSP104', 'RPL3 RPL4A RPS2 RPS3', 'CDC28 CLN1 CLN2 CLB5 CLB6'],
         'listing_example': 'GAL1 GAL7 GAL10',
-        'badge': 'beta',                # shown after the MOD's ID next to the logo ("SGD beta"); "" for none
+        'badge': 'beta',                # shown next to the logo; "" for none
     },
     'links': {
         'gene': 'https://www.yeastgenome.org/locus/{mod_id}',
@@ -109,6 +109,18 @@ def load(raw_dir, filename='mod.toml'):
         cfg['datasets']['metadata'] = os.path.join('meta', dumps[-1]) if dumps else None
     validate(cfg)
     return cfg
+
+
+def site_title(mod):
+    """The site's name: mod.site_title, or "<name> SPELL" ("WormBase SPELL"; the ID if the name is long).
+
+    Builds made before the site was renamed store the old "SPELL next" title; they get the derived name too.
+    """
+    title = mod.get('site_title')
+    if title and title != 'SPELL next':
+        return title
+    name = mod.get('name') or ''
+    return '%s SPELL' % (name if name and ' ' not in name else mod.get('id', '')).strip()
 
 
 def validate(cfg):

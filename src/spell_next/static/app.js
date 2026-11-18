@@ -887,7 +887,7 @@ async function showAbout() {
   const titleSearch = 'https://pubmed.ncbi.nlm.nih.gov/?term=' + encodeURIComponent(
     'Exploring the functional landscape of gene expression: directed search of large microarray compendia');
   app.innerHTML = `<article class="doc">
-    <h1>About SPELL next</h1>
+    <h1>About ${esc(CONFIG.mod.site_title || 'SPELL')}</h1>
     <p>SPELL (Serial Pattern of Expression Levels Locator) is a query-driven search engine for large gene
       expression compendia. Given a set of query genes, it weights each dataset by how well the query genes are
       co-expressed in it, then ranks every other gene by its weighted correlation with the query. Negative
@@ -1121,9 +1121,13 @@ window.addEventListener('hashchange', route);
     CONFIG = await api('/api/config');
   } catch (err) { /* keep defaults; pages still work without branding */ }
   const badge = document.querySelector('.badge');
-  badge.textContent = CONFIG.mod.badge ? `${MOD()} ${CONFIG.mod.badge}`.trim() : '';
+  badge.textContent = CONFIG.mod.badge || '';
   badge.hidden = !CONFIG.mod.badge;
-  document.title = `${CONFIG.mod.site_title || 'SPELL next'}${MOD() ? ' · ' + MOD() : ''}`;
+  const title = CONFIG.mod.site_title || 'SPELL';
+  document.title = title;
+  // "SGD SPELL": the MOD's name, then SPELL in the accent colour.
+  document.querySelector('.brand').innerHTML = title.endsWith(' SPELL')
+    ? `${esc(title.slice(0, -6))} <span>SPELL</span>` : esc(title);
   const ex = CONFIG.mod.examples || [];
   if (ex.length) {
     document.getElementById('search-input').placeholder = `Gene name(s), e.g. ${ex[0]}${ex[3] ? ' or ' + ex[3] : ''}`;

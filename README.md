@@ -74,7 +74,7 @@ SGD defaults apply. Templates: `configs/sgd.toml`, `configs/wb.example.toml`.
 
 | Section | What it sets |
 | --- | --- |
-| `[mod]` | ID, name, organism, species (home page wording), contact, example queries shown on the home page, badge next to the logo (`beta` by default, `""` for none) |
+| `[mod]` | ID, name, site title (logo and browser tab; default "<name> SPELL", e.g. `WormBase SPELL`, or the ID if the name is long), organism, species (home page wording), contact, example queries shown on the home page, badge next to the logo (`beta` by default, `""` for none) |
 | `[links]` | Gene page URL template: `{mod_id}`, `{systematic}`, `{standard}` |
 | `[genes]` | Gene names file: `sgd_features` (SGD_features.tab) or `gene_table` |
 | `[datasets]` | Dataset metadata: `spell_dump` (old SPELL export) or `dataset_table` |
